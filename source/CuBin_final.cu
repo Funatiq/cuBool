@@ -1,111 +1,8 @@
-#include <stdio.h>
-#include <stdint.h>
-#include <stdlib.h>
-#include <string.h>
-#include <stddef.h>
-#include <sys/types.h>
-#include <math.h>
-#include <time.h>
-#include "rngpu.hpp"
-#include <cuda_runtime.h>
-#include <device_launch_parameters.h>
-#include <cuda.h>
-#include <device_functions.h>
-#include <curand_kernel.h>
-#include <float.h>
-#include <cuda_profiler_api.h>
-#include <omp.h>
-#include <algorithm>
-#include <iostream>
-#include <fstream>
-#include <string>
-#include <sstream>
-#include <fstream>
-
-#define BLOCKSPERGRID 1024
-#define TILE_WIDTH 32
-
-#ifndef THREADSPERBLOCK
-#define THREADSPERBLOCK 1024
-#endif
-#ifndef DIM_PARAM
-#define DIM_PARAM 20
-#endif
-#ifndef CPUITERATIONS
-#define CPUITERATIONS 10
-#endif
-#ifndef INITIALIZATIONMODE
-#define INITIALIZATIONMODE 2
-#endif
-
-// Makros taken from Christian Hundt
-// https://github.com/gravitino/cudahelpers
-#define CUERR { \
-        cudaError_t cudaerr; \
-        if ((cudaerr = cudaGetLastError()) != cudaSuccess){ \
-            printf("CUDA ERROR: \"%s\" at LINE %d.\n", cudaGetErrorString(cudaerr), __LINE__); \
-        } \
-}
-
-#define TIMERSTART(label)                                                    \
-        cudaEvent_t start##label, stop##label;                               \
-        float time##label;                                                   \
-        cudaEventCreate(&start##label);                                      \
-        cudaEventCreate(&stop##label);                                       \
-        cudaEventRecord(start##label, 0);
-
-#define TIMERSTOP(label)                                                     \
-        cudaEventRecord(stop##label, 0);                                     \
-        cudaEventSynchronize(stop##label);                                   \
-        cudaEventElapsedTime(&time##label, start##label, stop##label);       \
-        printf("#%f ms (%s)\n", time##label, #label);
+#include "CuBin_final.hpp"
+#include "helper/rngpu.hpp"
 
 using namespace std;
 
-//texture<uint, cudaTextureType2D, cudaReadModeElementType> texRef;
-
-void readInputFileData(uint32_t**, uint32_t**, int*, int*, double*, string);
-
-void readInputFileTSV(uint32_t**, uint32_t**, int*, int*, double*, string);
-
-//void readInputFileMovieLens(uint32_t**, uint32_t**, int*, int *, double*, string);
-
-bool endsWith(const string&, const string&);
-
-// void initializeTextureMemory(uint32_t**, int, int);
-
-void initializeFactors(uint32_t**, uint32_t**, uint32_t**, uint32_t**, int, int, float, fast_kiss_state32_t*);
-
-void computeStartError(uint32_t*, uint32_t*, uint32_t*, int, int, int**, int*);
-
-void checkDistance(uint32_t*, uint32_t*, uint32_t*, int, int);
-
-void aftertestGPU(uint32_t*, uint32_t*, uint32_t*, int, int);
-
-void writeToFiles(uint32_t*, uint32_t*, int, int);
-
-void CPUcomputation(uint32_t*, uint32_t*, uint32_t*, int, int, int, uint32_t, int, float, int);
-
-void CPUvectorMatrixMultCompareRow(uint32_t*, uint32_t*, uint32_t*, int, int, int, int*, fast_kiss_state32_t*, int);
-
-void CPUvectorMatrixMultCompareCol(uint32_t*, uint32_t*, uint32_t*, int, int, int, int*, fast_kiss_state32_t*, int);
-
-void aftertestCPU(uint32_t*, uint32_t*, uint32_t*, uint32_t*, uint32_t*, int, int);
-
-__global__ void vectorMatrixMultCompareRow(uint32_t*, uint32_t*, uint32_t*, int, int, int, int*, uint32_t, float);
-
-__global__ void vectorMatrixMultCompareCol(uint32_t*, uint32_t*, uint32_t*, int, int, int, int*, uint32_t, float);
-
-__global__ void computeFullError(uint32_t*, uint32_t*, uint32_t*, int, int, int*);
-
-__global__ void matrixMultiply(uint32_t*, uint32_t*, uint32_t*, int, int);
-
-__global__ void matrixMultiplyInt(int*, int*, uint32_t*, int, int, int);
-
-__inline__ __device__ int warpReduceSum(int);
-
-// Main
-//
 int main(int argc, char **argv) {
     cudaProfilerStart();
     /* ./a.out  [data]
@@ -171,7 +68,7 @@ int main(int argc, char **argv) {
     
     cudaMemcpy(d_error_C0_C, d_error_C0_C_start, sizeof(int), cudaMemcpyDeviceToDevice);
     error_C0_C = error_C0_C_start;
-    // Now the starting errors is in stored in 4 values
+    // Now the starting errors are in stored in 4 values
     // error_C0_C_start, error_C0_C on CPU and GPU
 
 
@@ -187,7 +84,7 @@ int main(int argc, char **argv) {
     vector<int> impVector;
     #endif
     
-    // Every line and row changed 5000 times before aborting because of no improvement
+    // Every line and row changed x times before aborting because of no improvement
     int maxIterationsNoImp = (std::max(width,height) / linesAtOnce + 1) * everyLineChanged; 
     printf("\n- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
     printf("- - - - Starting %i GPU iterations, showing error every %i steps - - - -\n", gpuiterations, updateStep);
@@ -203,7 +100,8 @@ int main(int argc, char **argv) {
             #ifndef PERF
             printf("Current error: %f\n", error_C0_C / (double) (width * height));
             #endif
-            //checkDistance(d_Ab, d_Bb, d_C0, height, width);
+            // For debugging
+            // checkDistance(d_Ab, d_Bb, d_C0, height, width);
         }
 
         // Change col
@@ -513,6 +411,7 @@ __global__ void matrixMultiply( uint32_t *A, uint32_t *B, uint32_t *C,
             C[i * width + tid] = (A[i] & B[tid]) > 0 ? 1 : 0;
 }
 
+// https://gist.github.com/wh5a/4313739
 __global__ void matrixMultiplyInt(  int * A0, int * B0, uint32_t * C0, 
                                     int m, int k, int n) {
     __shared__ int ds_A[TILE_WIDTH][TILE_WIDTH];
@@ -561,7 +460,7 @@ void readInputFileData( uint32_t **C0, uint32_t **d_C0,
     stringstream sep(linestring);
     getline(sep, field, ',');
     (*height) = stoi(field, nullptr);
-    getline(sep, field, ',');
+    getline(sep, field, ','); 
     (*width) = stoi(field, nullptr);
     
     // Malloc for C0 and d_C0
@@ -593,65 +492,6 @@ void readInputFileData( uint32_t **C0, uint32_t **d_C0,
        
     printf("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
     printf("READING OF .DATA FILE COMPLETE\n");
-    printf("Read height: %i\nRead width: %i\nNon-zero elements: %i\nDensity: %f\n",
-           (*height), (*width), nonzeroelements, (*density));
-    printf("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
-}
-
-void readInputFileTSV( uint32_t **C0, uint32_t **d_C0, 
-                    int *width, int *height, 
-                    double *density, string filename) {
-
-
-    int intID;
-    int intLane;
-    int nonzeroelements;
-    ifstream input(filename);
-    char const row_delim = '\n';
-    char const field_delim = '\t';
-    vector<uint32_t> x_values;
-    vector<uint32_t> y_values;
-    int x_counter = 0;
-    int y_counter = 0;
-    
-    // Read file
-    for (string row; getline(input, row, row_delim); ) {
-        x_counter = 0;
-        istringstream ss(row);
-        for (string field; getline(ss, field, field_delim); ) {
-            if (stoi(field) == 1) {
-                x_values.push_back(x_counter);
-                y_values.push_back(y_counter);
-            }
-            x_counter++;
-        }
-        y_counter++;
-    }
-    *width = x_counter;
-    *height = y_counter;
-    nonzeroelements = x_values.size();
-    (*density) = (double) nonzeroelements / ((*width) * (*height));
-    
-    
-    // Malloc for C0 and d_C0
-    int sizeC = (int) ceil((*width) * (*height) / (double) 32.0);
-    (*C0) = (uint32_t *) malloc(sizeof(uint32_t) * sizeC);
-    cudaMalloc((void **) d_C0, sizeof(uint32_t) * sizeC);                                       CUERR
-    
-    // Set all entries 0
-    for (int i = 0; i < sizeC; i++)
-        (*C0)[i] = 0;
-
-    // Read rest of file
-    for (int i = 0; i < x_values.size(); i++) {
-        intID = (x_values[i] * (*height) + y_values[i]) / 32;
-        intLane = (x_values[i] * (*height) + y_values[i]) % 32;
-        (*C0)[intID] |= 1 << 32 - intLane - 1;
-    }
-    cudaMemcpy((*d_C0), (*C0), sizeof(uint32_t) * sizeC, cudaMemcpyHostToDevice);               CUERR
-    
-    printf("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
-    printf("READING OF DENSE .TSV FILE COMPLETE\n");
     printf("Read height: %i\nRead width: %i\nNon-zero elements: %i\nDensity: %f\n",
            (*height), (*width), nonzeroelements, (*density));
     printf("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
@@ -773,10 +613,10 @@ void aftertestGPU(  uint32_t *d_Ab, uint32_t *d_Bb, uint32_t *d_C0b,
     cudaMalloc((void**)&d_A, sizeof(int) * DIM_PARAM * height);                                             CUERR
     cudaMalloc((void**)&d_B, sizeof(int) * width * DIM_PARAM);                                              CUERR
     
-    cudaMemcpy(Ab, d_Ab, sizeof(uint32_t) * height, cudaMemcpyDeviceToHost);                              CUERR
-    cudaMemcpy(Bb, d_Bb, sizeof(uint32_t) * width, cudaMemcpyDeviceToHost);                               CUERR
+    cudaMemcpy(Ab, d_Ab, sizeof(uint32_t) * height, cudaMemcpyDeviceToHost);                                CUERR
+    cudaMemcpy(Bb, d_Bb, sizeof(uint32_t) * width, cudaMemcpyDeviceToHost);                                 CUERR
     cudaMemcpy(C0b, d_C0b, sizeof(uint32_t) * ((long long)(height*width) / 32.0 + 1),
-                    cudaMemcpyDeviceToHost);                                                            CUERR
+                    cudaMemcpyDeviceToHost);                                                                CUERR
 
     counterDensity = 0;
     for(int i = 0; i < height; i++){
@@ -824,10 +664,9 @@ void aftertestGPU(  uint32_t *d_Ab, uint32_t *d_Bb, uint32_t *d_C0b,
     for (int i = 0; i < height * width; i++)
         error_test_GPU += (((C0[i] - C_test_GPU[i]) * (C0[i] - C_test_GPU[i])));
 
-    // Second check
+    // Second check with regular matrix multiplication
     dim3 dimGrid((width - 1) / TILE_WIDTH + 1, (height - 1) / TILE_WIDTH + 1, 1);
     dim3 dimBlock(TILE_WIDTH, TILE_WIDTH, 1);
-    
     matrixMultiplyInt <<< dimGrid, dimBlock >>> 
                             (d_A, d_B, d_C_test_GPU, height, width, DIM_PARAM);                         CUERR
 
@@ -841,7 +680,6 @@ void aftertestGPU(  uint32_t *d_Ab, uint32_t *d_Bb, uint32_t *d_C0b,
     printf("Aftertest error between C0 and C on GPU (float): %i\n", error_test_GPU_2);
     printf("Density A: %f, Density B: %f\n", densityA, densityB);
     
-    //writeToFiles(A, B, width, height);
 }
 
 // Write result matrix in file
@@ -1094,6 +932,7 @@ void aftertestCPU(  uint32_t *Ab, uint32_t *Bb, uint32_t *d_Ab, uint32_t *d_Bb, 
 }
 
 /*
+
 void initializeTextureMemory(uint32_t **C0, int width, int height) {
     // Texture Memory Initialization
     //////////////////////////////////////////////////////////////////////////////////////
@@ -1119,3 +958,64 @@ void initializeTextureMemory(uint32_t **C0, int width, int height) {
     cudaBindTexture2D(NULL, texRef, d_C0_texture, desc, width, height, pitch);
     ///////////////////////////////////////////////////////////////////////////////////////
 }*/
+
+/*
+void readInputFileTSV( uint32_t **C0, uint32_t **d_C0, 
+                    int *width, int *height, 
+                    double *density, string filename) {
+
+
+    int intID;
+    int intLane;
+    int nonzeroelements;
+    ifstream input(filename);
+    char const row_delim = '\n';
+    char const field_delim = '\t';
+    vector<uint32_t> x_values;
+    vector<uint32_t> y_values;
+    int x_counter = 0;
+    int y_counter = 0;
+    
+    // Read file
+    for (string row; getline(input, row, row_delim); ) {
+        x_counter = 0;
+        istringstream ss(row);
+        for (string field; getline(ss, field, field_delim); ) {
+            if (stoi(field) == 1) {
+                x_values.push_back(x_counter);
+                y_values.push_back(y_counter);
+            }
+            x_counter++;
+        }
+        y_counter++;
+    }
+    *width = x_counter;
+    *height = y_counter;
+    nonzeroelements = x_values.size();
+    (*density) = (double) nonzeroelements / ((*width) * (*height));
+    
+    
+    // Malloc for C0 and d_C0
+    int sizeC = (int) ceil((*width) * (*height) / (double) 32.0);
+    (*C0) = (uint32_t *) malloc(sizeof(uint32_t) * sizeC);
+    cudaMalloc((void **) d_C0, sizeof(uint32_t) * sizeC);                                       CUERR
+    
+    // Set all entries 0
+    for (int i = 0; i < sizeC; i++)
+        (*C0)[i] = 0;
+
+    // Read rest of file
+    for (int i = 0; i < x_values.size(); i++) {
+        intID = (x_values[i] * (*height) + y_values[i]) / 32;
+        intLane = (x_values[i] * (*height) + y_values[i]) % 32;
+        (*C0)[intID] |= 1 << 32 - intLane - 1;
+    }
+    cudaMemcpy((*d_C0), (*C0), sizeof(uint32_t) * sizeC, cudaMemcpyHostToDevice);               CUERR
+    
+    printf("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
+    printf("READING OF DENSE .TSV FILE COMPLETE\n");
+    printf("Read height: %i\nRead width: %i\nNon-zero elements: %i\nDensity: %f\n",
+           (*height), (*width), nonzeroelements, (*density));
+    printf("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
+}
+*/
