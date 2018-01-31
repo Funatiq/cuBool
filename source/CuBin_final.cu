@@ -20,8 +20,8 @@ int main(int argc, char **argv) {
     int updateStep = argc > 2 ? atoi(argv[2]) : 1000;
     int linesAtOnce = argc > 3 ? atoi(argv[3]) : 4000;
     float threshold = argc > 4 ? atof(argv[4]) : 0;
-    int gpuiterations = argc > 5 ? atoi(argv[5]) : 10000;
-    int everyLineChanged = argc > 6 ? atoi(argv[6]) : 100000;
+    int gpuiterations = argc > 5 ? atoi(argv[5]) : 10000000;
+    int everyLineChanged = argc > 6 ? atoi(argv[6]) : 1000;
     float temperature = argc > 7 ?  atof(argv[7]) : 0;
     int iterationsTillReduced = argc > 8 ? (atoi(argv[8]) > 0? atoi(argv[8]) : INT_MAX) : INT_MAX;
     float tempFactor = argc > 9 ? atof(argv[9]) : 0.99;
@@ -77,7 +77,7 @@ int main(int argc, char **argv) {
     int iterations = 0;
     int lineToBeChanged;
     int iterationsNoImp = 0;
-    int error_C0_C_before = 0;
+    int error_C0_C_before = error_C0_C;
     threshold *= (width*height);
     #ifdef PERF
     vector<double> errorVector; // vector for error measurement
@@ -745,29 +745,42 @@ void writeToFiles(uint32_t* d_Ab, uint32_t* d_Bb, int width, int height){
 void CPUcomputation(uint32_t *Ab, uint32_t *Bb, uint32_t *C0, 
                     int width, int height, 
                     int startDistance, uint32_t seed, int updateStep,
-                    float threshold, int rowsAtOnce) {
+                    float threshold, int linesAtOnce) {
                         
     int *hDistance = &startDistance;
     fast_kiss_state32_t state;
     state = get_initial_fast_kiss_state32(seed);
     int toBeChanged;
     int iterations = 0;
+    int iterationsNoImp = 0;
+    int maxIterationsNoImp = (std::max(width,height) / linesAtOnce + 1) * 1000; 
+    int error_before = startDistance;
+
     TIMERSTART(CPUcomputation)
     printf("\n- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
     printf("- - - - Starting CPU opimization, showing error every %i steps - - - - -\n", updateStep);
     printf("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
-    while (*hDistance > threshold && iterations < CPUITERATIONS) {
+    while (*hDistance > threshold && iterations < CPUITERATIONS && iterationsNoImp < maxIterationsNoImp) {
+
+        iterations++;
         if (iterations % updateStep == 0)
             printf("Current Distance: %i\n", *hDistance);
         
         // Change row
         toBeChanged = ((unsigned int) fast_kiss32(&state)) % height;
-        CPUvectorMatrixMultCompareRow(Ab, Bb, C0, width, height, toBeChanged, hDistance, &state, rowsAtOnce);
+        CPUvectorMatrixMultCompareRow(Ab, Bb, C0, width, height, toBeChanged, hDistance, &state, linesAtOnce);
         
         // Change col
         toBeChanged = ((unsigned int) fast_kiss32(&state)) % width;
-        CPUvectorMatrixMultCompareCol(Ab, Bb, C0, width, height, toBeChanged, hDistance, &state, rowsAtOnce);
-        iterations++;
+        CPUvectorMatrixMultCompareCol(Ab, Bb, C0, width, height, toBeChanged, hDistance, &state, linesAtOnce);
+        
+        if (error_before - *hDistance == 0) {
+            iterationsNoImp++;
+        } else {
+            iterationsNoImp = 0;
+        }
+        error_before = *hDistance;
+        
     }
     printf("- - - - - - - - -\n");
     printf("End Distance on CPU: %i, Number of Iterations: %i,  Error remaining: %f\n", 
@@ -795,7 +808,7 @@ void CPUvectorMatrixMultCompareRow( uint32_t *Ab, uint32_t *Bb,
 
         randomNumber = fast_kiss32(state);
         for (int i = 0; i < DIM_PARAM; i++)
-            currentRow_changed ^= (randomNumber >> i) & 11 ?(0 << i) : (1 << i);
+            currentRow_changed ^= (randomNumber >> i) & 11 ?(0 << 21 - 1 - i) : (1 << 32 - 1 - i);
         
         error = 0;
 
@@ -840,7 +853,7 @@ void CPUvectorMatrixMultCompareCol( uint32_t *Ab, uint32_t *Bb, uint32_t *C0,
 
         randomNumber = fast_kiss32(state);
         for (int i = 0; i < DIM_PARAM; i++)
-            currentCol_changed ^= (randomNumber >> i) & 11 ? (0 << i) : (1 << i);
+            currentCol_changed ^= (randomNumber >> i) & 11 ? (0 << 32 - 1 - i) : (1 << 32 - 1 - i);
         
         error = 0;
         #pragma omp parallel for private(cEntryOld, cEntryNew, cTruthEntry) reduction(+: error)
