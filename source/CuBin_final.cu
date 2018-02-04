@@ -20,13 +20,13 @@ int main(int argc, char **argv) {
     int updateStep = argc > 2 ? atoi(argv[2]) : 1000;
     int linesAtOnce = argc > 3 ? atoi(argv[3]) : 4000;
     float threshold = argc > 4 ? atof(argv[4]) : 0;
-    int gpuiterations = argc > 5 ? atoi(argv[5]) : 10000000;
+    int gpuiterations = argc > 5 ? atoi(argv[5]) : 10000;
     int everyLineChanged = argc > 6 ? atoi(argv[6]) : 1000;
     float temperature = argc > 7 ?  atof(argv[7]) : 0;
     int iterationsTillReduced = argc > 8 ? (atoi(argv[8]) > 0? atoi(argv[8]) : INT_MAX) : INT_MAX;
     float tempFactor = argc > 9 ? atof(argv[9]) : 0.99;
     //int seed = argc > 10 ? atoi(argv[10]) : 41;
-    int seed = (unsigned long)time(NULL) % UINT32_MAX;
+    uint32_t seed = (unsigned long)time(NULL) % UINT32_MAX;
     fast_kiss_state32_t state = get_initial_fast_kiss_state32(seed);
     
     // Discard first 100000 entries of PRNG
