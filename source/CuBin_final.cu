@@ -25,8 +25,8 @@ int main(int argc, char **argv) {
     float temperature = argc > 7 ?  atof(argv[7]) : 0;
     int iterationsTillReduced = argc > 8 ? (atoi(argv[8]) > 0? atoi(argv[8]) : INT_MAX) : INT_MAX;
     float tempFactor = argc > 9 ? atof(argv[9]) : 0.99;
-    int seed = argc > 10 ? atoi(argv[10]) : 41;
-    seed = (unsigned long)time(NULL) % UINT32_MAX;
+    //int seed = argc > 10 ? atoi(argv[10]) : 41;
+    int seed = (unsigned long)time(NULL) % UINT32_MAX;
     fast_kiss_state32_t state = get_initial_fast_kiss_state32(seed);
     
     // Discard first 100000 entries of PRNG
@@ -36,7 +36,7 @@ int main(int argc, char **argv) {
     // Read file and save matrix in C0 and d_C0
     uint32_t *C0, *d_C0;
     int width, height;
-    double density;
+    float density;
     
     // COO coordinates
     string ending = "data";
@@ -70,7 +70,6 @@ int main(int argc, char **argv) {
     error_C0_C = error_C0_C_start;
     // Now the starting errors are in stored in 4 values
     // error_C0_C_start, error_C0_C on CPU and GPU
-
 
     // MAIN PART
     // on GPU
@@ -234,7 +233,6 @@ vectorMatrixMultCompareRow( uint32_t *A, uint32_t *B, uint32_t *C,
         for (int i = 0; i < DIM_PARAM; i++)
             shared_currentRow_changed ^= (randomNumber >> i) & 11 ? (0 << 32 - 1 - i) : (1 << 32 - 1 - i);
     }
-    
     __syncthreads();
     
     currentRow_changed = shared_currentRow_changed;
@@ -444,7 +442,7 @@ __global__ void matrixMultiplyInt(  int * A0, int * B0, uint32_t * C0,
 
 void readInputFileData( uint32_t **C0, uint32_t **d_C0, 
                     int *width, int *height, 
-                    double *density, string filename) {
+                    float *density, string filename) {
     int x, y;
     int nonzeroelements = 0;
     int sizeC;
@@ -895,11 +893,11 @@ void aftertestCPU(  uint32_t *Ab, uint32_t *Bb, uint32_t *d_Ab, uint32_t *d_Bb, 
     
     for(int i=0; i<height;i++)
         for(int j=0;j<DIM_PARAM;j++)
-            A[i*DIM_PARAM + j] = (Ab[i] >> DIM_PARAM-j-1) & 1;
+            A[i*DIM_PARAM + j] = (Ab[i] >> 32 - j - 1) & 1;
 
     for(int i=0;i<width;i++)
         for(int j=0;j<DIM_PARAM;j++)
-            B[j*width+i] = (Bb[i] >> DIM_PARAM-j-1) & 1;
+            B[j*width+i] = (Bb[i] >> 32 - j - 1) & 1;
         
     int intId;
     int intLane;

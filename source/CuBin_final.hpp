@@ -60,9 +60,9 @@
         cudaEventElapsedTime(&time##label, start##label, stop##label);       \
         printf("#%f ms (%s)\n", time##label, #label);
 
-void readInputFileData(uint32_t**, uint32_t**, int*, int*, double*, std::string);
+void readInputFileData(uint32_t**, uint32_t**, int*, int*, float*, std::string);
 
-void readInputFileTSV(uint32_t**, uint32_t**, int*, int*, double*, std::string);
+//void readInputFileTSV(uint32_t**, uint32_t**, int*, int*, double*, std::string);
 
 //void readInputFileMovieLens(uint32_t**, uint32_t**, int*, int *, double*, string);
 
