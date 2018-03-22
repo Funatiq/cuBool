@@ -3,6 +3,84 @@
 
 using namespace std;
 
+using element_t = uint32_t;
+using bit_vector_t = uint32_t;
+
+void generate_random_matrix(bit_vector_t **C0, bit_vector_t **d_C0, 
+                    int width, int height, float *density) {
+
+    bit_vector_t *Ab = (bit_vector_t *) malloc(sizeof(bit_vector_t) * height);
+    bit_vector_t *Bb = (bit_vector_t *) malloc(sizeof(bit_vector_t) * width);
+
+    uint32_t seed = 42;
+    fast_kiss_state32_t state = get_initial_fast_kiss_state32(seed);
+
+    bit_vector_t bit_vector_mask = bit_vector_t(~0) << (32-DIM_PARAM);
+
+    for(int i=0; i < height; ++i)
+        Ab[i] = fast_kiss32(&state) & fast_kiss32(&state) & fast_kiss32(&state) & bit_vector_mask;
+    for(int j=0; j < width; ++j)
+        Bb[j] = fast_kiss32(&state) & fast_kiss32(&state) & fast_kiss32(&state) & bit_vector_mask;
+
+    // Malloc for C0 and d_C0
+    int sizeC = (int) ceil(width * height / (double) 32.0);
+    (*C0) = (bit_vector_t *) malloc(sizeof(bit_vector_t) * sizeC);
+    cudaMalloc((void **) d_C0, sizeof(bit_vector_t) * sizeC);                                       CUERR
+    
+    // Set all entries 0
+    // for (int i = 0; i < sizeC; i++)
+        // (*C0)[i] = 0;
+
+    // Create C
+    int nonzeroelements = 0;
+
+    for(int j=0; j < width; ++j) {
+        for(int i=0; i < height; ++i) {
+            if(Ab[i] & Bb[j]) {
+                int index = j*height+i;
+                int intID = index / 32;
+                int intLane = index % 32;
+
+                (*C0)[intID] |= 1 << (32 - intLane - 1);
+
+                ++nonzeroelements;
+            }
+        }
+    }
+
+
+    // // Create C
+    // for(int j=0; j < width; ++j) {
+    //     for(int i=0; i < height; i+=sizeof(bit_vector_t)) {
+    //         bit_vector_t cj = 0;
+    //         for(int b=0; b < sizeof(bit_vector_t); ++b) {
+    //             cj <<= 1;
+    //             if(i+b < height) {
+    //                 if(A[i+b] & B[j]) {
+    //                     cj |= 1;
+    //                     ++nonzeroelements;
+    //                 }
+    //             }
+    //         }
+    //         (*C0)[] = cj
+    //     }
+    // }
+    
+    (*density) = (double) nonzeroelements / (width * height);
+
+    cudaMemcpy((*d_C0), (*C0), sizeof(bit_vector_t) * sizeC, cudaMemcpyHostToDevice);               CUERR
+       
+    printf("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
+    printf("MATRIX CREATION COMPLETE\n");
+    printf("Height: %i\nWidth: %i\nNon-zero elements: %i\nDensity: %f\n",
+           height, width, nonzeroelements, (*density));
+    printf("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
+
+    free(Ab);
+    free(Bb);
+}
+
+
 int main(int argc, char **argv) {
     cudaProfilerStart();
     /* ./a.out  [data]
@@ -34,7 +112,7 @@ int main(int argc, char **argv) {
         fast_kiss32(&state);
     
     // Read file and save matrix in C0 and d_C0
-    uint32_t *C0, *d_C0;
+    element_t *C0, *d_C0;
     int width, height;
     float density;
     
@@ -42,6 +120,10 @@ int main(int argc, char **argv) {
     string ending = "data";
     if (endsWith(filename, ending)) {
         readInputFileData(&C0, &d_C0, &width, &height, &density, filename);
+    } else if (filename.compare("test") == 0) {
+        width = 5000;
+        height = 5000;
+        generate_random_matrix(&C0, &d_C0, width, height, &density);
     } else {
         cout << "Wrong data file" << endl;
         return 0;
@@ -51,8 +133,8 @@ int main(int argc, char **argv) {
     // initializeTextureMemory(&C0, width, height);
 
     // Initialize Ab, Bb, d_Ab, d_Bb, all bitwise used matrices
-    uint32_t *Ab, *Bb;
-    uint32_t *d_Ab, *d_Bb;
+    bit_vector_t *Ab, *Bb;
+    bit_vector_t *d_Ab, *d_Bb;
     initializeFactors(&Ab, &Bb, &d_Ab, &d_Bb, width, height, density, &state);
     // A and B now initialized on device and host
 
@@ -89,16 +171,23 @@ int main(int argc, char **argv) {
     printf("- - - - Starting %i GPU iterations, showing error every %i steps - - - -\n", gpuiterations, updateStep);
     printf("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
     TIMERSTART(GPUKERNELLOOP)
-    while (threshold < error_C0_C && iterations < gpuiterations && iterationsNoImp < maxIterationsNoImp) {
+    while (
+        // threshold < error_C0_C
+        // && 
+        iterations < gpuiterations
+        // && 
+        // iterationsNoImp < maxIterationsNoImp
+        )
+    {
         iterations++;
         if (iterations % iterationsTillReduced == 0)
             temperature *= tempFactor;
         
         // Pull error from GPU to show it
         if (iterations % updateStep == 0) {
-            #ifndef PERF
+            // #ifndef PERF
             printf("Current error: %f\n", error_C0_C / (double) (width * height));
-            #endif
+            // #endif
             // For debugging
             // checkDistance(d_Ab, d_Bb, d_C0, height, width);
         }
@@ -133,6 +222,14 @@ int main(int argc, char **argv) {
         errorVector.push_back(error_C0_C / (double) (width * height));
         #endif
     }
+
+    if (!(threshold < error_C0_C))
+        printf("error below threshold\n");
+    if (!(iterations < gpuiterations))
+        printf("reached iteration limit\n");
+    if (!(iterationsNoImp < maxIterationsNoImp)) 
+        printf("reached limit of iterations without improvement\n");
+
     // Pull final error from GPU
     cudaMemcpy(&error_C0_C, d_error_C0_C, sizeof(int), cudaMemcpyDeviceToHost);                                 CUERR
     printf("- - - - - - - - -\n");
@@ -200,79 +297,99 @@ int warpReduceSum(int val) {
     return val;
 }
 
+__inline__ __device__
+int blockReduceSum(int val, int* reductionArray) {
+    int lane = threadIdx.x % warpSize;
+    int wid = threadIdx.x / warpSize;
+    val = warpReduceSum(val);
+    if (lane == 0) reductionArray[wid] = val;
+    __syncthreads();
+    val = (threadIdx.x < blockDim.x / warpSize) ? reductionArray[lane] : 0;
+    if (wid == 0) val = warpReduceSum(val);
+    return val;
+}
+
+
+__inline__ __device__
+bit_vector_t get_flip_mask(fast_kiss_state32_t * state) {
+    bit_vector_t bit_flip_mask = fast_kiss32(state);
+    bit_flip_mask &= fast_kiss32(state);
+    bit_flip_mask &= fast_kiss32(state);
+    // bit_flip_mask &= fast_kiss32(state);
+    bit_flip_mask <<= (32-DIM_PARAM);
+    return bit_flip_mask;
+}
+
+__inline__ __device__
+bit_vector_t get_flip_mask_11(fast_kiss_state32_t * state) {
+    bit_vector_t bit_flip_mask = 0;
+    bit_vector_t randomNumber = fast_kiss32(state);
+    #pragma unroll
+    for (int i = 0; i < DIM_PARAM; i++) {
+        bit_flip_mask |= (randomNumber >> i) & 11 ? (0 << 32 - 1 - i) : (1 << 32 - 1 - i);
+    }
+    return bit_flip_mask;
+}
+
+__inline__ __device__
+bool metro(fast_kiss_state32_t * state, int error, float temperature) {
+    // Metropolis–Hastings algorithm
+    float randomNumber = fast_kiss32(state) / (float) UINT32_MAX;
+    float metro = temperature > 0.0f ? fminf(1, expf((float) - error / temperature)) : 0 ;
+    return randomNumber < metro;
+}
+
 // [A] row Change kernel
 __global__ void
-vectorMatrixMultCompareRow( uint32_t *A, uint32_t *B, uint32_t *C, 
+vectorMatrixMultCompareRow( bit_vector_t *A, bit_vector_t *B, bit_vector_t *C, 
                             int width, int height, 
                             int startrow, int *global_error,
                             uint32_t seed, float temperature) {
 
     int rowToBeChanged = (blockIdx.x + startrow) % height;
-    int cTruthEntry;
-    int cEntryOld;
-    int cEntryNew;
-    int error_thread;
-    int intId;
-    int intLane;
-    uint32_t randomNumber;
-    uint32_t currentColThread;
-    uint32_t currentRow;
-    uint32_t currentRow_changed;
-    float metro;
-    __shared__ fast_kiss_state32_t state;
+
+    fast_kiss_state32_t state;
     __shared__ int reductionArray[32];
-    __shared__ uint32_t shared_currentRow_changed;
+    __shared__ bit_vector_t shared_currentRow_changed;
     
-    currentRow = A[rowToBeChanged];
+    bit_vector_t currentRow = A[rowToBeChanged];
     if (threadIdx.x == 0) {
-        shared_currentRow_changed = currentRow; // load row to be changed in shared memory
-        
         state = get_initial_fast_kiss_state32((seed + blockIdx.x) % UINT32_MAX);
-        randomNumber = fast_kiss32(&state);
-        #pragma unroll
-        for (int i = 0; i < DIM_PARAM; i++)
-            shared_currentRow_changed ^= (randomNumber >> i) & 11 ? (0 << 32 - 1 - i) : (1 << 32 - 1 - i);
+
+        shared_currentRow_changed = currentRow ^ get_flip_mask(&state);
+        // shared_currentRow_changed = currentRow ^  get_flip_mask_11(&state);
     }
     __syncthreads();
     
-    currentRow_changed = shared_currentRow_changed;
-    error_thread = 0;
-    for (int i = 0; i <= ((width - 1) / blockDim.x); i++) {
-        if ((i * blockDim.x + threadIdx.x) < width) {
-            currentColThread = B[i * blockDim.x + threadIdx.x];
-            intId = (((i * blockDim.x + threadIdx.x) * height) + rowToBeChanged) / 32;
-            intLane = (((i * blockDim.x + threadIdx.x) * height) + rowToBeChanged) % 32;
-            cTruthEntry = (C[intId] >> 32 - intLane - 1) & 1; 
+    bit_vector_t currentRow_changed = shared_currentRow_changed;
+    int error_thread = 0;
+    for (int i = threadIdx.x; i < width; i += blockDim.x) {
+        if (i < width) {
+            bit_vector_t currentColThread = B[i];
+            int intId = (i * height + rowToBeChanged) / 32;
+            int intLane = (i * height + rowToBeChanged) % 32;
+            int cTruthEntry = (C[intId] >> 32 - intLane - 1) & 1; 
 
-            cEntryOld = (currentRow         & currentColThread) > 0 ? 1 : 0;
-            cEntryNew = (currentRow_changed & currentColThread) > 0 ? 1 : 0;
-            error_thread += ((cEntryNew - cTruthEntry) * (cEntryNew - cTruthEntry)) -
-                            ((cEntryOld - cTruthEntry) * (cEntryOld - cTruthEntry));
+            int cEntryOld = (currentRow         & currentColThread) ? 1 : 0;
+            int cEntryNew = (currentRow_changed & currentColThread) ? 1 : 0;
+            error_thread += (cEntryNew ^ cTruthEntry) - (cEntryOld ^ cTruthEntry);
         }
     }
     __syncthreads();
 
-    // Reduction across block
-    int lane = threadIdx.x % warpSize;
-    int wid = threadIdx.x / warpSize;
-    error_thread = warpReduceSum(error_thread);
-    if (lane == 0) reductionArray[wid] = error_thread;
-    __syncthreads();
-    error_thread = (threadIdx.x < blockDim.x / warpSize) ? reductionArray[lane] : 0;
-    if (wid == 0) error_thread = warpReduceSum(error_thread);
-    // Thread with threadIdx.x==0 now has error in error_thread
+    int error_block = blockReduceSum(error_thread, reductionArray);
+    // Thread with threadIdx.x==0 now has total error of block
 
     // Thread 0 checks if new low has been found and applies if necessary
     if (threadIdx.x == 0) {
-        if (error_thread < 0) {
-            A[rowToBeChanged] = shared_currentRow_changed;
-            atomicAdd(global_error, error_thread);
-        } else { // Metropolis–Hastings algorithm
-            randomNumber = fast_kiss32(&state) / (double) UINT32_MAX;
-            metro = temperature > 0.0f ? fminf(1, expf((double) -error_thread / temperature)) : 0 ;
-            if (randomNumber < metro) {
-                A[rowToBeChanged] = shared_currentRow_changed;
-                atomicAdd(global_error, error_thread);
+        if (error_block < 0) {
+            A[rowToBeChanged] = currentRow_changed;
+            atomicAdd(global_error, error_block);
+        } else {
+            // Metropolis–Hastings algorithm
+            if (metro(&state, error_block, temperature)) {
+                A[rowToBeChanged] = currentRow_changed;
+                atomicAdd(global_error, error_block);
             }
         }
     }
@@ -281,85 +398,62 @@ vectorMatrixMultCompareRow( uint32_t *A, uint32_t *B, uint32_t *C,
 // [B] col change kernel
 //
 __global__ void
-vectorMatrixMultCompareCol(uint32_t *A, uint32_t *B, uint32_t *C, 
+vectorMatrixMultCompareCol(bit_vector_t *A, bit_vector_t *B, bit_vector_t *C, 
                             int width, int height, 
                             int startcol, int *global_error,
                             uint32_t seed, float temperature) {
 
     int colToBeChanged = (blockIdx.x + startcol) % width;
-    int cTruthEntry;
-    int cEntryOld;
-    int cEntryNew;
-    int error_thread;
-    int intId;
-    int intLane;
-    uint32_t randomNumber;
-    uint32_t currentRowThread;
-    uint32_t currentCol;
-    uint32_t currentCol_changed;
-    float metro;
-    __shared__ fast_kiss_state32_t state;
-    __shared__ int shared[32];
-    __shared__ uint32_t shared_currentCol_changed;
 
-    currentCol = B[colToBeChanged];
+    fast_kiss_state32_t state;
+    __shared__ int reductionArray[32];
+    __shared__ bit_vector_t shared_currentCol_changed;
+
+    bit_vector_t currentCol = B[colToBeChanged];
     if (threadIdx.x == 0) {
-        shared_currentCol_changed = currentCol; // load row to be changed in shared memory
-
         state = get_initial_fast_kiss_state32((seed + blockIdx.x) % UINT32_MAX);
-        randomNumber = fast_kiss32(&state);
-        #pragma unroll
-        for (int i = 0; i < DIM_PARAM; i++)
-            shared_currentCol_changed ^= (randomNumber >> i) & 11 ? (0 << 32 - 1 - i) : (1 << 32 - 1 - i);
+
+        shared_currentCol_changed = currentCol ^ get_flip_mask(&state);
+        // shared_currentCol_changed = currentCol ^ get_flip_mask_11(&state);
     }
     __syncthreads();
     
-    currentCol_changed = shared_currentCol_changed;
-    error_thread = 0;
-    for (int i = 0; i <= ((height - 1) / blockDim.x); i++) {
-        if ((i * blockDim.x + threadIdx.x) < height) {
-            currentRowThread = A[i * blockDim.x + threadIdx.x];
-            intId = ((colToBeChanged * height) + (i * blockDim.x + threadIdx.x)) / 32;
-            intLane = ((colToBeChanged * height) + (i * blockDim.x + threadIdx.x)) % 32;
-            cTruthEntry = (C[intId] >> 32 - intLane - 1) & 1; 
+    bit_vector_t currentCol_changed = shared_currentCol_changed;
+    int error_thread = 0;
+    for (int i = threadIdx.x; i < height; i += blockDim.x) {
+        if (i < height) {
+            bit_vector_t currentRowThread = A[i];
+            int intId = (colToBeChanged * height + i) / 32;
+            int intLane = (colToBeChanged * height + i) % 32;
+            int cTruthEntry = (C[intId] >> 32 - intLane - 1) & 1; 
             
-            cEntryOld = (currentCol         & currentRowThread) > 0 ? 1 : 0;        
-            cEntryNew = (currentCol_changed & currentRowThread) > 0 ? 1 : 0;
-            error_thread += ((cEntryNew - cTruthEntry) * (cEntryNew - cTruthEntry)) -
-                            ((cEntryOld - cTruthEntry) * (cEntryOld - cTruthEntry));
+            int cEntryOld = (currentCol         & currentRowThread) > 0 ? 1 : 0;        
+            int cEntryNew = (currentCol_changed & currentRowThread) > 0 ? 1 : 0;
+            error_thread += (cEntryNew ^ cTruthEntry) - (cEntryOld ^ cTruthEntry);
         }
     }
     __syncthreads();
 
-    // Reduction across block
-    int lane = threadIdx.x % warpSize;
-    int wid = threadIdx.x / warpSize;
-    error_thread = warpReduceSum(error_thread);
-    if (lane == 0) shared[wid] = error_thread;
-    __syncthreads();
-    error_thread = (threadIdx.x < blockDim.x / warpSize) ? shared[lane] : 0;
-    if (wid == 0) error_thread = warpReduceSum(error_thread);
-    // Thread with threadIdx.x==0 now has error in error_thread
+    int error_block = blockReduceSum(error_thread, reductionArray);
+    // Thread with threadIdx.x==0 now has total error of block
 
     // Thread 0 checks if new low has been found and applies if necessary
     if (threadIdx.x == 0) {
-        if (error_thread < 0) {
-            B[colToBeChanged] = shared_currentCol_changed;
-            atomicAdd(global_error, error_thread);
-        }  else { // Metropolis–Hastings algorithm
-            randomNumber = fast_kiss32(&state) / (double) UINT32_MAX;
-            metro = temperature > 0.0f ? fminf(1, expf((double)-error_thread / temperature)) : 0 ;
-            if (randomNumber < metro) {
-                B[colToBeChanged] = shared_currentCol_changed;
-                atomicAdd(global_error, error_thread);
+        if (error_block < 0) {
+            B[colToBeChanged] = currentCol_changed;
+            atomicAdd(global_error, error_block);
+        }  else { 
+            // Metropolis–Hastings algorithm
+            if (metro(&state, error_block, temperature)) {
+                B[colToBeChanged] = currentCol_changed;
+                atomicAdd(global_error, error_block);
             }
         }
     }
-    __syncthreads();
 }
 
 // Start error kernel
-__global__ void computeFullError(   uint32_t *A, uint32_t *B, uint32_t *C, 
+__global__ void computeFullError(   element_t *A, element_t *B, element_t *C, 
                                     int width, int height, int *distance_test) {
     int tid = threadIdx.x + blockIdx.x * blockDim.x;
     int lineSum;
@@ -375,7 +469,7 @@ __global__ void computeFullError(   uint32_t *A, uint32_t *B, uint32_t *C,
     if (tid < width) {
         error_thread = 0;
         for (int j = 0; j < height; j++) {
-            lineSum = (A[j] & B[tid]) > 0 ? 1 : 0;
+            lineSum = (A[j] & B[tid]) ? 1 : 0;
             intId = (tid * height + j) / 32;
             intLane = (tid * height + j) % 32;
             truthEntry = (C[intId] >> 32 - intLane - 1) & 1; 
@@ -401,7 +495,7 @@ __global__ void computeFullError(   uint32_t *A, uint32_t *B, uint32_t *C,
 }
 
 // Each thread one entry of a row
-__global__ void matrixMultiply( uint32_t *A, uint32_t *B, uint32_t *C, 
+__global__ void matrixMultiply( element_t *A, element_t *B, element_t *C, 
                                 int width, int height) {
     int tid = threadIdx.x + blockIdx.x * blockDim.x;
     if (tid < width)
@@ -410,23 +504,23 @@ __global__ void matrixMultiply( uint32_t *A, uint32_t *B, uint32_t *C,
 }
 
 // https://gist.github.com/wh5a/4313739
-__global__ void matrixMultiplyInt(  int * A0, int * B0, uint32_t * C0, 
+__global__ void matrixMultiplyInt(  element_t * A0, element_t * B0, element_t * C0, 
                                     int m, int k, int n) {
-    __shared__ int ds_A[TILE_WIDTH][TILE_WIDTH];
-    __shared__ int ds_B[TILE_WIDTH][TILE_WIDTH];
+    __shared__ element_t ds_A[TILE_WIDTH][TILE_WIDTH];
+    __shared__ element_t ds_B[TILE_WIDTH][TILE_WIDTH];
     int col = blockIdx.x * blockDim.x + threadIdx.x;
     int row = blockIdx.y * blockDim.y + threadIdx.y;
     int tx = threadIdx.x;
     int ty = threadIdx.y;
-    int sum = 0;
+    element_t sum = 0;
 
     for(int t = 0; t < (n - 1) / TILE_WIDTH + 1; t++) {
         if(row < m && t * TILE_WIDTH + tx < n)
-            ds_A[ty][tx] = roundf(A0[row * n + t * TILE_WIDTH + tx]);
+            ds_A[ty][tx] = (A0[row * n + t * TILE_WIDTH + tx]);
         else
             ds_A[ty][tx] = 0.0;
         if(t * TILE_WIDTH + ty < n && col < k)
-            ds_B[ty][tx] = roundf(B0[(t * TILE_WIDTH + ty) * k + col]);
+            ds_B[ty][tx] = (B0[(t * TILE_WIDTH + ty) * k + col]);
         else
             ds_B[ty][tx] = 0.0;
         __syncthreads();
@@ -440,7 +534,7 @@ __global__ void matrixMultiplyInt(  int * A0, int * B0, uint32_t * C0,
 
 }
 
-void readInputFileData( uint32_t **C0, uint32_t **d_C0, 
+void readInputFileData( bit_vector_t **C0, bit_vector_t **d_C0, 
                     int *width, int *height, 
                     float *density, string filename) {
     int x, y;
@@ -463,8 +557,8 @@ void readInputFileData( uint32_t **C0, uint32_t **d_C0,
     
     // Malloc for C0 and d_C0
     sizeC = (int) ceil((*width) * (*height) / (double) 32.0);
-    (*C0) = (uint32_t *) malloc(sizeof(uint32_t) * sizeC);
-    cudaMalloc((void **) d_C0, sizeof(uint32_t) * sizeC);                                       CUERR
+    (*C0) = (bit_vector_t *) malloc(sizeof(bit_vector_t) * sizeC);
+    cudaMalloc((void **) d_C0, sizeof(bit_vector_t) * sizeC);                                       CUERR
     
     // Set all entries 0
     for (int i = 0; i < sizeC; i++)
@@ -486,7 +580,7 @@ void readInputFileData( uint32_t **C0, uint32_t **d_C0,
     
     (*density) = (double) nonzeroelements / ((*width) * (*height));
 
-    cudaMemcpy((*d_C0), (*C0), sizeof(uint32_t) * sizeC, cudaMemcpyHostToDevice);               CUERR
+    cudaMemcpy((*d_C0), (*C0), sizeof(bit_vector_t) * sizeC, cudaMemcpyHostToDevice);               CUERR
        
     printf("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
     printf("READING OF .DATA FILE COMPLETE\n");
@@ -500,7 +594,7 @@ bool endsWith(const string& s, const string& suffix) {
     return s.rfind(suffix) == (s.size()-suffix.size());
 }
 
-void computeStartError(uint32_t *d_Ab, uint32_t *d_Bb, uint32_t *d_Cb, 
+void computeStartError(bit_vector_t *d_Ab, bit_vector_t *d_Bb, bit_vector_t *d_Cb, 
                         int width, int height,
                         int **d_distance_C0_C_start, int *distance_C0_C_start) {
     TIMERSTART(ERRORFIRST)
@@ -517,7 +611,7 @@ void computeStartError(uint32_t *d_Ab, uint32_t *d_Bb, uint32_t *d_Cb,
 }
 
 // Only for debugging
-void checkDistance(uint32_t *d_Ab, uint32_t *d_Bb, uint32_t *d_C0, int height, int width) {
+void checkDistance(element_t *d_Ab, element_t *d_Bb, element_t *d_C0, int height, int width) {
     int distance_test;
     int *d_distance_test;
     cudaMalloc((void **) &d_distance_test, sizeof(int));                                                CUERR
@@ -532,15 +626,15 @@ void checkDistance(uint32_t *d_Ab, uint32_t *d_Bb, uint32_t *d_C0, int height, i
 }
 
 // Initialization of A and B
-void initializeFactors( uint32_t **Ab, uint32_t **Bb, 
-                        uint32_t **d_Ab, uint32_t **d_Bb, 
+void initializeFactors( bit_vector_t **Ab, bit_vector_t **Bb, 
+                        bit_vector_t **d_Ab, bit_vector_t **d_Bb, 
                         int width, int height, 
                         float density, fast_kiss_state32_t *state) {
 
-    (*Ab) = (uint32_t *) malloc(sizeof(uint32_t) * height);
-    (*Bb) = (uint32_t *) malloc(sizeof(uint32_t) * width);
-    cudaMalloc((void **) d_Ab, sizeof(uint32_t) * height);                                              CUERR
-    cudaMalloc((void **) d_Bb, sizeof(uint32_t) * width);                                               CUERR
+    (*Ab) = (bit_vector_t *) malloc(sizeof(bit_vector_t) * height);
+    (*Bb) = (bit_vector_t *) malloc(sizeof(bit_vector_t) * width);
+    cudaMalloc((void **) d_Ab, sizeof(bit_vector_t) * height);                                              CUERR
+    cudaMalloc((void **) d_Bb, sizeof(bit_vector_t) * width);                                               CUERR
 
     // Initialize A and B and copy to device
     bool threshold;
@@ -582,39 +676,42 @@ void initializeFactors( uint32_t **Ab, uint32_t **Bb,
     }
     
     // copy to device arrays
-    cudaMemcpy((*d_Ab), (*Ab), sizeof(uint32_t) * height, cudaMemcpyHostToDevice);                      CUERR
-    cudaMemcpy((*d_Bb), (*Bb), sizeof(uint32_t) * width, cudaMemcpyHostToDevice);                       CUERR
+    cudaMemcpy((*d_Ab), (*Ab), sizeof(bit_vector_t) * height, cudaMemcpyHostToDevice);                      CUERR
+    cudaMemcpy((*d_Bb), (*Bb), sizeof(bit_vector_t) * width, cudaMemcpyHostToDevice);                       CUERR
 
     printf("Initialization of A and B complete\n");
     printf("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
 }
 
 // Used for debugging and checking for correctness, not optimized
-void aftertestGPU(  uint32_t *d_Ab, uint32_t *d_Bb, uint32_t *d_C0b, 
+void aftertestGPU(  bit_vector_t *d_Ab, bit_vector_t *d_Bb, bit_vector_t *d_C0b, 
                     int width, int height) {
     TIMERSTART(aftertestGPU)
     uint32_t *d_C_test_GPU;
     uint32_t *C_test_GPU;
     
-    int *A, *B, *C0;
-    uint32_t *Ab, *Bb, *C0b;
-    int *d_A, *d_B;
+    element_t *A, *B, *C0;
+    bit_vector_t *Ab, *Bb, *C0b;
+    element_t *d_A, *d_B;
     float densityA, densityB;
     uint32_t counterDensity;
-    A = (int*) malloc(sizeof(int) * DIM_PARAM * height);
-    Ab = (uint32_t*) malloc(sizeof(uint32_t) * height);
-    B = (int*) malloc(sizeof(int) * width * DIM_PARAM);
-    Bb = (uint32_t*) malloc(sizeof(uint32_t) * width);
-    C0 = (int*) malloc(sizeof(int) *width * height);
-    C0b = (uint32_t*) malloc(sizeof(uint32_t) * ((long long) (height * width) / 32.0 + 1));
+    A = (element_t*) malloc(sizeof(int) * DIM_PARAM * height);
+    Ab = (bit_vector_t*) malloc(sizeof(bit_vector_t) * height);
+    B = (element_t*) malloc(sizeof(int) * width * DIM_PARAM);
+    Bb = (bit_vector_t*) malloc(sizeof(bit_vector_t) * width);
+    C0 = (element_t*) malloc(sizeof(int) * width * height);
+
+    int sizeCb = (int) ceil(width * height / (double) 32.0);
+    // int sizeCb = ((long long) (height * width) / 32.0 + 1);
+    C0b = (bit_vector_t*) malloc(sizeof(bit_vector_t) * sizeCb);
+
     
-    cudaMalloc((void**)&d_A, sizeof(int) * DIM_PARAM * height);                                             CUERR
-    cudaMalloc((void**)&d_B, sizeof(int) * width * DIM_PARAM);                                              CUERR
+    cudaMalloc((void**)&d_A, sizeof(element_t) * DIM_PARAM * height);                                             CUERR
+    cudaMalloc((void**)&d_B, sizeof(element_t) * width * DIM_PARAM);                                              CUERR
     
-    cudaMemcpy(Ab, d_Ab, sizeof(uint32_t) * height, cudaMemcpyDeviceToHost);                                CUERR
-    cudaMemcpy(Bb, d_Bb, sizeof(uint32_t) * width, cudaMemcpyDeviceToHost);                                 CUERR
-    cudaMemcpy(C0b, d_C0b, sizeof(uint32_t) * ((long long)(height*width) / 32.0 + 1),
-                    cudaMemcpyDeviceToHost);                                                                CUERR
+    cudaMemcpy(Ab, d_Ab, sizeof(bit_vector_t) * height, cudaMemcpyDeviceToHost);                                CUERR
+    cudaMemcpy(Bb, d_Bb, sizeof(bit_vector_t) * width, cudaMemcpyDeviceToHost);                                 CUERR
+    cudaMemcpy(C0b, d_C0b, sizeof(bit_vector_t) * sizeCb, cudaMemcpyDeviceToHost);                                                                CUERR
 
     counterDensity = 0;
     for(int i = 0; i < height; i++){
@@ -875,19 +972,19 @@ void CPUvectorMatrixMultCompareCol( uint32_t *Ab, uint32_t *Bb, uint32_t *C0,
 }
 
 // Used for debugging and checking, not optimized
-void aftertestCPU(  uint32_t *Ab, uint32_t *Bb, uint32_t *d_Ab, uint32_t *d_Bb, uint32_t *C0b, 
+void aftertestCPU(  bit_vector_t *Ab, bit_vector_t *Bb, bit_vector_t *d_Ab, bit_vector_t *d_Bb, bit_vector_t *C0b, 
                     int width, int height) {    
     TIMERSTART(aftertestCPU)
-    int *A, *B, *C0;
-    int *d_A, *d_B;
+    element_t *A, *B, *C0;
+    element_t *d_A, *d_B;
     uint32_t *C_test_CPU;
     uint32_t *d_C_test_CPU;
-    A = (int*)malloc(sizeof(int) * DIM_PARAM * height);
-    B = (int*)malloc(sizeof(int) * width * DIM_PARAM);
-    C0 = (int*)malloc(sizeof(int) * width * height);
+    A = (element_t*)malloc(sizeof(element_t) * DIM_PARAM * height);
+    B = (element_t*)malloc(sizeof(element_t) * width * DIM_PARAM);
+    C0 = (element_t*)malloc(sizeof(element_t) * width * height);
     C_test_CPU = (uint32_t *) malloc(sizeof(uint32_t) * width * height);                CUERR
-    cudaMalloc((void**)&d_A, sizeof(int) * DIM_PARAM * height);                         CUERR
-    cudaMalloc((void**)&d_B, sizeof(int)*width * DIM_PARAM);                            CUERR
+    cudaMalloc((void**)&d_A, sizeof(element_t) * DIM_PARAM * height);                         CUERR
+    cudaMalloc((void**)&d_B, sizeof(element_t)*width * DIM_PARAM);                            CUERR
     cudaMalloc((void**) &d_C_test_CPU, sizeof(uint32_t) * height * width);              CUERR
 
     
@@ -910,10 +1007,10 @@ void aftertestCPU(  uint32_t *Ab, uint32_t *Bb, uint32_t *d_Ab, uint32_t *d_Bb, 
     }
 
     
-    cudaMemcpy(d_A, A, sizeof(uint32_t) * height * DIM_PARAM, cudaMemcpyHostToDevice);  CUERR
-    cudaMemcpy(d_B, B, sizeof(uint32_t) * width * DIM_PARAM, cudaMemcpyHostToDevice);   CUERR
-    cudaMemcpy(d_Ab, Ab, sizeof(uint32_t) * height, cudaMemcpyHostToDevice);            CUERR
-    cudaMemcpy(d_Bb, Bb, sizeof(uint32_t) * width, cudaMemcpyHostToDevice);             CUERR
+    cudaMemcpy(d_A, A, sizeof(element_t) * height * DIM_PARAM, cudaMemcpyHostToDevice);  CUERR
+    cudaMemcpy(d_B, B, sizeof(element_t) * width * DIM_PARAM, cudaMemcpyHostToDevice);   CUERR
+    cudaMemcpy(d_Ab, Ab, sizeof(bit_vector_t) * height, cudaMemcpyHostToDevice);            CUERR
+    cudaMemcpy(d_Bb, Bb, sizeof(bit_vector_t) * width, cudaMemcpyHostToDevice);             CUERR
     
     // Doing a check two times: once with A,B and once with Ab,Bb just to make sure
     

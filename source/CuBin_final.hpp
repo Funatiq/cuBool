@@ -22,11 +22,11 @@
 #include <sstream>
 #include <fstream>
 
-#define BLOCKSPERGRID 1024
+// #define BLOCKSPERGRID 1024
 #define TILE_WIDTH 32
 
 #ifndef THREADSPERBLOCK
-#define THREADSPERBLOCK 1024
+#define THREADSPERBLOCK 128
 #endif
 #ifndef DIM_PARAM
 #define DIM_PARAM 20
@@ -60,6 +60,9 @@
         cudaEventElapsedTime(&time##label, start##label, stop##label);       \
         printf("#%f ms (%s)\n", time##label, #label);
 
+using element_t = uint32_t;
+using bit_vector_t = uint32_t;
+
 void readInputFileData(uint32_t**, uint32_t**, int*, int*, float*, std::string);
 
 //void readInputFileTSV(uint32_t**, uint32_t**, int*, int*, double*, std::string);
@@ -76,7 +79,7 @@ void computeStartError(uint32_t*, uint32_t*, uint32_t*, int, int, int**, int*);
 
 void checkDistance(uint32_t*, uint32_t*, uint32_t*, int, int);
 
-void aftertestGPU(uint32_t*, uint32_t*, uint32_t*, int, int);
+void aftertestGPU(bit_vector_t*, bit_vector_t*, bit_vector_t*, int, int);
 
 void writeToFiles(uint32_t*, uint32_t*, int, int);
 
@@ -96,6 +99,6 @@ __global__ void computeFullError(uint32_t*, uint32_t*, uint32_t*, int, int, int*
 
 __global__ void matrixMultiply(uint32_t*, uint32_t*, uint32_t*, int, int);
 
-__global__ void matrixMultiplyInt(int*, int*, uint32_t*, int, int, int);
+__global__ void matrixMultiplyInt(element_t*, element_t*, element_t*, int, int, int);
 
 __inline__ __device__ int warpReduceSum(int);
