@@ -1,5 +1,7 @@
+FLAGS = -std=c++11 -arch=sm_61 -Xcompiler="-fopenmp" -O3
+
 CuBin:
-	nvcc source/CuBin_final.cu -std=c++11 -arch=sm_61 -Xcompiler="-fopenmp" -o CuBin $(MAKROS)
+	nvcc source/CuBin_final.cu $(FLAGS) -o CuBin $(MAKROS)
 
 perf: MAKROS=-DPERF
 perf: CuBin
