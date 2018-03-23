@@ -139,11 +139,11 @@ int main(int argc, char **argv) {
     printf("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
     TIMERSTART(GPUKERNELLOOP)
     while (
-        // threshold < error_C0_C
-        // && 
+        threshold < error_C0_C
+        && 
         iterations < gpuiterations
-        // && 
-        // iterationsNoImp < maxIterationsNoImp
+        && 
+        iterationsNoImp < maxIterationsNoImp
         )
     {
         iterations++;
