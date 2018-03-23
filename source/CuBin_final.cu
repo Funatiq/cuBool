@@ -55,7 +55,7 @@ int main(int argc, char **argv) {
     int everyLineChanged = argc > 6 ? atoi(argv[6]) : 1000;
     float temperature = argc > 7 ?  atof(argv[7]) : 0;
     int iterationsTillReduced = argc > 8 && atoi(argv[8]) > 0 ? atoi(argv[8]) : std::numeric_limits<int>::max();
-    float tempFactor = argc > 9 ? atof(argv[9]) : 0.99;
+    float tempFactor = argc > 9 ? atof(argv[9]) : 0.9f;
     //int seed = argc > 10 ? atoi(argv[10]) : 41;
     uint32_t seed = (unsigned long)time(NULL) % UINT32_MAX;
     fast_kiss_state32_t state = get_initial_fast_kiss_state32(seed);
@@ -134,8 +134,10 @@ int main(int argc, char **argv) {
         )
     {
         iterations++;
-        if (iterations % iterationsTillReduced == 0)
+        if (iterations % iterationsTillReduced == 0) {
             temperature *= tempFactor;
+            printf("Temperature: %f\t", temperature);
+        }
         
         // Pull error from GPU to show it
         if (iterations % updateStep == 0) {

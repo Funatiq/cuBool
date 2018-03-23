@@ -25,13 +25,15 @@ void generate_random_matrix(bit_vector_t **C0, bit_vector_t **d_C0,
         Bb[j] = fast_kiss32(&state) & fast_kiss32(&state) & fast_kiss32(&state) & bit_vector_mask;
 
     // Malloc for C0 and d_C0
-    int sizeC = ceil(width * height / (float) 32.0);
+    // int padded_height = SDIV(height,32) * 32;
+    // int sizeC = width * padded_height / 32;
+    int sizeC = SDIV(width * height, 32);
     (*C0) = (bit_vector_t *) malloc(sizeof(bit_vector_t) * sizeC);
     cudaMalloc((void **) d_C0, sizeof(bit_vector_t) * sizeC);                                       CUERR
     
     // Set all entries 0
-    // for (int i = 0; i < sizeC; i++)
-        // (*C0)[i] = 0;
+    for (int i = 0; i < sizeC; i++)
+        (*C0)[i] = 0;
 
     // Create C
     int nonzeroelements = 0;
@@ -51,7 +53,7 @@ void generate_random_matrix(bit_vector_t **C0, bit_vector_t **d_C0,
     }
 
 
-    // // Create C
+    // Create C
     // for(int j=0; j < width; ++j) {
     //     for(int i=0; i < height; i+=sizeof(bit_vector_t)) {
     //         bit_vector_t cj = 0;

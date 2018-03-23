@@ -48,9 +48,13 @@ uint32_t get_flip_mask_11(fast_kiss_state32_t * state) {
 
 __inline__ __device__
 bool metro(fast_kiss_state32_t * state, int error, float temperature) {
+	if(error < 0)
+		return true;
+	if(temperature <= 0)
+		return false;
     // Metropolis–Hastings algorithm
     float randomNumber = fast_kiss32(state) / (float) UINT32_MAX;
-    float metro = temperature > 0.0f ? fminf(1.0f, expf((float) - error / temperature)) : 0 ;
+    float metro = fminf(1.0f, expf((float) - error / temperature));
     return randomNumber < metro;
 }
 
@@ -98,15 +102,10 @@ vectorMatrixMultCompareRow( bit_vector_t *A, bit_vector_t *B, bit_vector_t *C,
 
     // Thread 0 checks if new low has been found and applies if necessary
     if (threadIdx.x == 0) {
-        if (error_block < 0) {
+        // Metropolis–Hastings algorithm
+        if (metro(&state, error_block, temperature)) {
             A[rowToBeChanged] = currentRow_changed;
             atomicAdd(global_error, error_block);
-        } else {
-            // Metropolis–Hastings algorithm
-            if (metro(&state, error_block, temperature)) {
-                A[rowToBeChanged] = currentRow_changed;
-                atomicAdd(global_error, error_block);
-            }
         }
     }
 }
@@ -155,15 +154,10 @@ vectorMatrixMultCompareCol(bit_vector_t *A, bit_vector_t *B, bit_vector_t *C,
 
     // Thread 0 checks if new low has been found and applies if necessary
     if (threadIdx.x == 0) {
-        if (error_block < 0) {
+        // Metropolis–Hastings algorithm
+        if (metro(&state, error_block, temperature)) {
             B[colToBeChanged] = currentCol_changed;
             atomicAdd(global_error, error_block);
-        }  else { 
-            // Metropolis–Hastings algorithm
-            if (metro(&state, error_block, temperature)) {
-                B[colToBeChanged] = currentCol_changed;
-                atomicAdd(global_error, error_block);
-            }
         }
     }
 }
