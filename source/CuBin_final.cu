@@ -65,46 +65,59 @@ int main(int argc, char **argv) {
         fast_kiss32(&state);
     
     // Read file and save matrix in C0 and d_C0
-    my_bit_vector_t *C0b, *d_C0b;
+    my_bit_vector_t *A0b, *B0b, *C0b;
     int width, height;
     float density;
     
     // COO coordinates
     string ending = "data";
     if (endsWith(filename, ending)) {
-        readInputFileData(&C0b, &d_C0b, &width, &height, &density, filename);
+        readInputFileData(C0b, width, height, density, filename);
     } else if (filename.compare("test") == 0) {
         width = 5000;
         height = 5000;
-        generate_random_matrix(&C0b, &d_C0b, width, height, &density);
+        generate_random_matrix(width, height, 3, A0b, B0b, C0b, density);
+        // free(A0b);
+        // free(B0b);
     } else {
         printf("Wrong data file\n");
         return 0;
     }
+
+    int padded_height_32 = SDIV(height,32);
+    int sizeC = width * padded_height_32;
+    my_bit_vector_t *d_C0b;
+    cudaMalloc(&d_C0b, sizeof(my_bit_vector_t) * sizeC);                                       CUERR
+    cudaMemcpy(d_C0b, C0b, sizeof(my_bit_vector_t) * sizeC, cudaMemcpyHostToDevice);               CUERR
+
         
     // Initialize Texture Memory with C0b
     // initializeTextureMemory(&C0b, width, height);
 
     // Initialize Ab, Bb, d_Ab, d_Bb, all bitwise used matrices
     my_bit_vector_t *Ab, *Bb;
+    // Ab = A0b;
+    // Bb = B0b;
+    initializeFactors(Ab, Bb, width, height, density, &state);
+
     my_bit_vector_t *d_Ab, *d_Bb;
-    initializeFactors(&Ab, &Bb, &d_Ab, &d_Bb, width, height, density, &state);
+    cudaMalloc((void **) &d_Ab, sizeof(my_bit_vector_t) * height);                                              CUERR
+    cudaMalloc((void **) &d_Bb, sizeof(my_bit_vector_t) * width);                                               CUERR
+    // copy to device arrays
+    cudaMemcpy(d_Ab, Ab, sizeof(my_bit_vector_t) * height, cudaMemcpyHostToDevice);                      CUERR
+    cudaMemcpy(d_Bb, Bb, sizeof(my_bit_vector_t) * width, cudaMemcpyHostToDevice);                       CUERR
     // A and B now initialized on device and host
 
-    // Calculate original error, save it two times each one for GPU, one for CPU
+    // Calculate original error
     int error_C0_C_start = 0;
-    int error_C0_C       = 0;
-    int *d_error_C0_C_start, *d_error_C0_C;
-    cudaMalloc((void **) &d_error_C0_C, sizeof(int));                                                           CUERR
-    cudaMalloc((void **) &d_error_C0_C_start, sizeof(int));                                                     CUERR
-    cudaMemcpy(d_error_C0_C_start, &error_C0_C_start, sizeof(int), cudaMemcpyHostToDevice);                     CUERR
+    int *d_error_C0_C;
+    computeStartError(d_Ab, d_Bb, d_C0b, width, height, d_error_C0_C, error_C0_C_start);
+    int error_C0_C = error_C0_C_start;
+
+
     
-    computeStartError(d_Ab, d_Bb, d_C0b, width, height, &d_error_C0_C_start, &error_C0_C_start);
-    
-    cudaMemcpy(d_error_C0_C, d_error_C0_C_start, sizeof(int), cudaMemcpyDeviceToDevice);
-    error_C0_C = error_C0_C_start;
-    // Now the starting errors are in stored in 4 values
-    // error_C0_C_start, error_C0_C on CPU and GPU
+    // Now the starting errors are in stored in 3 values
+    // error_C0_C_start, error_C0_C on CPU and d_error_C0_C on GPU
 
     // MAIN PART
     // on GPU
@@ -201,7 +214,16 @@ int main(int argc, char **argv) {
     
     // Write result matrices to files
     #ifndef PERF
-    writeToFiles(d_Ab, d_Bb, width, height);
+    my_bit_vector_t *A_out = (my_bit_vector_t*) malloc(sizeof(my_bit_vector_t) * height);
+    my_bit_vector_t *B_out = (my_bit_vector_t*) malloc(sizeof(my_bit_vector_t) * width);
+    
+    cudaMemcpy(A_out, d_Ab, sizeof(my_bit_vector_t) * height, cudaMemcpyDeviceToHost);                              CUERR
+    cudaMemcpy(B_out, d_Bb, sizeof(my_bit_vector_t) * width, cudaMemcpyDeviceToHost);                               CUERR
+    
+    writeToFiles(A_out, B_out, width, height);
+
+    free(A_out);
+    free(B_out);
     #endif
     
     // Output CSV files for plotting
@@ -244,28 +266,29 @@ int main(int argc, char **argv) {
     cudaFree(d_Bb);
     cudaFree(d_C0b);
     cudaFree(d_error_C0_C);
-    cudaFree(d_error_C0_C_start);
+    // cudaFree(d_error_C0_C_start);
     return 0;
 }
 
 
 
 // Start error kernel
-template<typename element_t>
-__global__ void computeFullError(   element_t *A, element_t *B, element_t *C, 
+__global__ void computeFullError(   uint32_t *Ab, uint32_t *Bb, uint32_t *Cb, 
                                     int width, int height, int *distance_test) {
-    int tid = threadIdx.x + blockIdx.x * blockDim.x;
+    int j = threadIdx.x + blockIdx.x * blockDim.x;
     //__shared__ volatile int shared_distance[THREADSPERBLOCK];
     //shared_distance[threadIdx.x] = 0;
     __shared__ int reductionArray[32];
     
     int error_thread = 0;
-    if (tid < width) {
-        for (int j = 0; j < height; j++) {
-            int lineSum = (A[j] & B[tid]) ? 1 : 0;
-            int intId = (tid * height + j) / 32;
-            int intLane = (tid * height + j) % 32;
-            int truthEntry = (C[intId] >> 32 - intLane - 1) & 1; 
+    if (j < width) {
+        for (int i = 0; i < height; i++) {
+            int lineSum = (Ab[i] & Bb[j]) ? 1 : 0;
+            int intId = i / 32 * width + j;
+            int intLane = i % 32;
+            // int intId = (j * height + i) / 32;
+            // int intLane = (j * height + i) % 32;
+            int truthEntry = (Cb[intId] >> (32 - intLane - 1)) & 1; 
             error_thread += lineSum ^ truthEntry;
         }
     }
@@ -274,41 +297,47 @@ __global__ void computeFullError(   element_t *A, element_t *B, element_t *C,
     int error_block = blockReduceSum(error_thread, reductionArray);
     // Thread with threadIdx.x==0 now has total error of block
 
-   if (threadIdx.x == 0)
+   if (threadIdx.x == 0) {
         atomicAdd(distance_test, error_block);
+   }
 }
 
 
 template<typename bit_vector_t>
 void computeStartError(bit_vector_t *d_Ab, bit_vector_t *d_Bb, bit_vector_t *d_Cb, 
                         int width, int height,
-                        int **d_distance_C0_C_start, int *distance_C0_C_start) {
+                        int *&d_distance_C0_C, int &distance_C0_C) {
     TIMERSTART(ERRORFIRST)
+
+    cudaMalloc((void **) &d_distance_C0_C, sizeof(int));                                                           CUERR
+    cudaMemcpy(d_distance_C0_C, &distance_C0_C, sizeof(int), cudaMemcpyHostToDevice);                     CUERR
+
+    computeFullError <<< (width-1) / THREADSPERBLOCK + 1, THREADSPERBLOCK >>>
+                        (d_Ab, d_Bb, d_Cb, width, height, d_distance_C0_C);                    CUERR
     
-    computeFullError <<< width / THREADSPERBLOCK + 1, THREADSPERBLOCK >>>
-                        (d_Ab, d_Bb, d_Cb, width, height, (*d_distance_C0_C_start));                    CUERR
-                        
-    cudaMemcpy(distance_C0_C_start, (*d_distance_C0_C_start), sizeof(int), cudaMemcpyDeviceToHost);     CUERR
+    cudaMemcpy(&distance_C0_C, d_distance_C0_C, sizeof(int), cudaMemcpyDeviceToHost);     CUERR
+
+    TIMERSTOP(ERRORFIRST)
 
     printf("Starting error between AxB=C and C0: %f \n", 
-            (*distance_C0_C_start) / ((double) width * height));
-    TIMERSTOP(ERRORFIRST)
+           distance_C0_C / ((double) width * height));
     printf("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
 }
 
 // Only for debugging
-template<typename element_t>
-void checkDistance(element_t *d_Ab, element_t *d_Bb, element_t *d_C0, int height, int width) {
+template<typename bit_vector_t>
+void checkDistance(bit_vector_t *d_Ab, bit_vector_t *d_Bb, bit_vector_t *d_C0b, int height, int width) {
     int distance_test;
     int *d_distance_test;
-    cudaMalloc((void **) &d_distance_test, sizeof(int));                                                CUERR
     distance_test = 0;
+    cudaMalloc((void **) &d_distance_test, sizeof(int));                                                CUERR
     cudaMemcpy(d_distance_test, &distance_test, sizeof(int), cudaMemcpyHostToDevice);                   CUERR
     
     computeFullError <<< width / THREADSPERBLOCK + 1, THREADSPERBLOCK >>>  
-                            (d_Ab, d_Bb, d_C0, height, width, d_distance_test);                         CUERR
+                            (d_Ab, d_Bb, d_C0b, height, width, d_distance_test);                         CUERR
                                             
     cudaMemcpy(&distance_test, d_distance_test, sizeof(int), cudaMemcpyDeviceToHost);                   CUERR
+
     printf("Real Error: %f\n", (distance_test/(double)(height*width)));
 }
 

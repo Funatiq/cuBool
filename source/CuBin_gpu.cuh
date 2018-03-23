@@ -3,10 +3,12 @@
 
 #include "helper/matrix_mult.cuh"
 
+#define FULLMASK 0xffffffff
+
 __inline__ __device__
 int warpReduceSum(int val) {
     for (int offset = warpSize / 2; offset > 0; offset /= 2)
-        val += __shfl_down_sync(0xffffffff, val, offset);
+        val += __shfl_down_sync(FULLMASK, val, offset);
     return val;
 }
 
@@ -17,8 +19,10 @@ int blockReduceSum(int val, int* reductionArray) {
     val = warpReduceSum(val);
     if (lane == 0) reductionArray[wid] = val;
     __syncthreads();
-    val = (threadIdx.x < blockDim.x / warpSize) ? reductionArray[lane] : 0;
-    if (wid == 0) val = warpReduceSum(val);
+    if (wid == 0) {
+        val = (threadIdx.x < blockDim.x / warpSize) ? reductionArray[lane] : 0;
+        val = warpReduceSum(val);
+    }
     return val;
 }
 
@@ -48,10 +52,10 @@ uint32_t get_flip_mask_11(fast_kiss_state32_t * state) {
 
 __inline__ __device__
 bool metro(fast_kiss_state32_t * state, int error, float temperature) {
-	if(error < 0)
-		return true;
-	if(temperature <= 0)
-		return false;
+    if(error < 0)
+        return true;
+    if(temperature <= 0)
+        return false;
     // Metropolis–Hastings algorithm
     float randomNumber = fast_kiss32(state) / (float) UINT32_MAX;
     float metro = fminf(1.0f, expf((float) - error / temperature));
@@ -83,12 +87,12 @@ vectorMatrixMultCompareRow( bit_vector_t *A, bit_vector_t *B, bit_vector_t *C,
     
     bit_vector_t currentRow_changed = shared_currentRow_changed;
     int error_thread = 0;
-    for (int i = threadIdx.x; i < width; i += blockDim.x) {
-        if (i < width) {
-            bit_vector_t currentColThread = B[i];
-            int intId = (i * height + rowToBeChanged) / 32;
-            int intLane = (i * height + rowToBeChanged) % 32;
-            int cTruthEntry = (C[intId] >> 32 - intLane - 1) & 1; 
+    for (int j = threadIdx.x; j < width; j += blockDim.x) {
+        if (j < width) {
+            bit_vector_t currentColThread = B[j];
+            int intId = rowToBeChanged / 32 * width + j;
+            int intLane = rowToBeChanged % 32;
+            int cTruthEntry = (C[intId] >> (32 - intLane - 1)) & 1; 
 
             int cEntryOld = (currentRow         & currentColThread) ? 1 : 0;
             int cEntryNew = (currentRow_changed & currentColThread) ? 1 : 0;
@@ -138,9 +142,9 @@ vectorMatrixMultCompareCol(bit_vector_t *A, bit_vector_t *B, bit_vector_t *C,
     for (int i = threadIdx.x; i < height; i += blockDim.x) {
         if (i < height) {
             bit_vector_t currentRowThread = A[i];
-            int intId = (colToBeChanged * height + i) / 32;
-            int intLane = (colToBeChanged * height + i) % 32;
-            int cTruthEntry = (C[intId] >> 32 - intLane - 1) & 1; 
+            int intId = i / 32 * width + colToBeChanged;
+            int intLane = i % 32;
+            int cTruthEntry = (C[intId] >> (32 - intLane - 1)) & 1; 
             
             int cEntryOld = (currentCol         & currentRowThread) > 0 ? 1 : 0;        
             int cEntryNew = (currentCol_changed & currentRowThread) > 0 ? 1 : 0;
@@ -206,13 +210,13 @@ void aftertestGPU(  bit_vector_t *d_Ab, bit_vector_t *d_Bb, bit_vector_t *d_C0b,
     }
     float densityB = counterDensity / (double) (DIM_PARAM * width);
 
-    int intId;
-    int intLane;
-    for (int i = 0; i < width; i++) {
-        for (int j = 0; j < height; j++) {
-             intId = (i * height + j) / 32;
-             intLane = (i * height + j) % 32;
-             C0[j * width + i] = (C0b[intId] >> 32 - intLane - 1) & 1;
+    for (int i = 0; i < height; i++) {
+        for (int j = 0; j < width; j++) {
+            // int intId = (i * height + j) / 32;
+            // int intLane = (i * height + j) % 32;
+            int intId = i / 32 * width + j;
+            int intLane = i % 32;           
+            C0[i * width + j] = (C0b[intId] >> 32 - intLane - 1) & 1;
         }
     }
     
@@ -252,5 +256,101 @@ void aftertestGPU(  bit_vector_t *d_Ab, bit_vector_t *d_Bb, bit_vector_t *d_C0b,
     printf("Density A: %f, Density B: %f\n", densityA, densityB);
     
 }
+
+
+// [A] row Change kernel
+template<typename bit_vector_t>
+__global__ void
+vectorMatrixMultCompareRowWarp( bit_vector_t *A, bit_vector_t *B, bit_vector_t *C, 
+                            int width, int height, 
+                            int startrow, int *global_error,
+                            uint32_t seed, float temperature) {
+
+    int rowToBeChanged = (blockIdx.x + startrow) % height;
+
+    fast_kiss_state32_t state;
+    
+    bit_vector_t currentRow = A[rowToBeChanged];
+    bit_vector_t currentRow_changed;
+    if (threadIdx.x == 0) {
+        state = get_initial_fast_kiss_state32(seed + blockIdx.x);
+
+        currentRow_changed = currentRow ^ get_flip_mask(&state);
+    }
+    currentRow_changed = __shfl_sync(FULLMASK, currentRow_changed, 0);
+    
+    int error_thread = 0;
+    for (int j = threadIdx.x; j < width; j += blockDim.x) {
+        if (j < width) {
+            bit_vector_t currentColThread = B[j];
+            int intId = rowToBeChanged / 32 * width + j;
+            int intLane = rowToBeChanged % 32;
+            int cTruthEntry = (C[intId] >> (32 - intLane - 1)) & 1; 
+
+            int cEntryOld = (currentRow         & currentColThread) ? 1 : 0;
+            int cEntryNew = (currentRow_changed & currentColThread) ? 1 : 0;
+            error_thread += (cEntryNew ^ cTruthEntry) - (cEntryOld ^ cTruthEntry);
+        }
+    }
+    int error_warp = warpReduceSum(error_thread);
+    // Thread with threadIdx.x==0 now has total error of warp
+
+    // Thread 0 checks if new low has been found and applies if necessary
+    if (threadIdx.x == 0) {
+        // Metropolis–Hastings algorithm
+        if (metro(&state, error_warp, temperature)) {
+            A[rowToBeChanged] = currentRow_changed;
+            atomicAdd(global_error, error_warp);
+        }
+    }
+}
+
+// [B] col change kernel
+template<typename bit_vector_t>
+__global__ void
+vectorMatrixMultCompareColWarp(bit_vector_t *A, bit_vector_t *B, bit_vector_t *C, 
+                            int width, int height, 
+                            int startcol, int *global_error,
+                            uint32_t seed, float temperature) {
+
+    int colToBeChanged = (blockIdx.x + startcol) % width;
+
+    fast_kiss_state32_t state;
+
+    bit_vector_t currentCol = B[colToBeChanged];
+    bit_vector_t currentCol_changed;
+    if (threadIdx.x == 0) {
+        state = get_initial_fast_kiss_state32((seed + blockIdx.x) % UINT32_MAX);
+
+        currentCol_changed = currentCol ^ get_flip_mask(&state);
+    }
+    currentCol_changed = __shfl_sync(FULLMASK, currentCol_changed, 0);
+    
+    int error_thread = 0;
+    for (int i = threadIdx.x; i < height; i += blockDim.x) {
+        if (i < height) {
+            bit_vector_t currentRowThread = A[i];
+            int intId = i / 32 * width + colToBeChanged;
+            int intLane = i % 32;
+            int cTruthEntry = (C[intId] >> (32 - intLane - 1)) & 1; 
+            
+            int cEntryOld = (currentCol         & currentRowThread) > 0 ? 1 : 0;        
+            int cEntryNew = (currentCol_changed & currentRowThread) > 0 ? 1 : 0;
+            error_thread += (cEntryNew ^ cTruthEntry) - (cEntryOld ^ cTruthEntry);
+        }
+    }
+    int error_warp = warpReduceSum(error_thread);
+    // Thread with threadIdx.x==0 now has total error of warp
+
+    // Thread 0 checks if new low has been found and applies if necessary
+    if (threadIdx.x == 0) {
+        // Metropolis–Hastings algorithm
+        if (metro(&state, error_warp, temperature)) {
+            B[colToBeChanged] = currentCol_changed;
+            atomicAdd(global_error, error_warp);
+        }
+    }
+}
+
 
 #endif

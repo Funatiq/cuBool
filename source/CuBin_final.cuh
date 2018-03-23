@@ -4,10 +4,10 @@
 template<typename bit_vector_t>
 void computeStartError(bit_vector_t *d_Ab, bit_vector_t *d_Bb, bit_vector_t *d_Cb, 
                         int width, int height,
-                        int **d_distance_C0_C_start, int *distance_C0_C_start);
+                        int *&d_distance_C0_C_start, int &distance_C0_C_start);
 
-template<typename element_t>
-void checkDistance(element_t *d_Ab, element_t *d_Bb, element_t *d_C0, int height, int width);
+template<typename bit_vector_t>
+void checkDistance(bit_vector_t *d_Ab, bit_vector_t *d_Bb, bit_vector_t *d_C0b, int height, int width);
 
 // template<typename bit_vector_t, typename element_t = uint32_t>
 // void aftertestGPU(bit_vector_t *d_Ab, bit_vector_t *d_Bb, bit_vector_t *d_C0b, 
@@ -49,8 +49,7 @@ void checkDistance(element_t *d_Ab, element_t *d_Bb, element_t *d_C0, int height
 //                             int startcol, int *global_error,
 //                             uint32_t seed, float temperature);
 
-template<typename element_t>
-__global__ void computeFullError(   element_t *A, element_t *B, element_t *C, 
+__global__ void computeFullError(   uint32_t *A, uint32_t *B, uint32_t *C, 
                                     int width, int height, int *distance_test);
 
 // template<typename bit_vector_t, typename element_t>

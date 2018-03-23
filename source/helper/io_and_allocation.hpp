@@ -5,35 +5,47 @@
 #include <sstream>
 #include <fstream>
 
+#include "config.h"
+#include "rngpu.hpp"
+
+#ifndef SDIV
+// safe division
+#define SDIV(x,y)(((x)+(y)-1)/(y))
+#endif
+
 using namespace std;
 
 template<typename bit_vector_t>
-void generate_random_matrix(bit_vector_t **C0, bit_vector_t **d_C0, 
-                    int width, int height, float *density) {
+void generate_random_matrix(int width, int height, int num_kiss, bit_vector_t * &Ab, bit_vector_t * &Bb, bit_vector_t * &C0b, float &density) {
 
-    bit_vector_t *Ab = (bit_vector_t *) malloc(sizeof(bit_vector_t) * height);
-    bit_vector_t *Bb = (bit_vector_t *) malloc(sizeof(bit_vector_t) * width);
+    Ab = (bit_vector_t *) malloc(sizeof(bit_vector_t) * height);
+    Bb = (bit_vector_t *) malloc(sizeof(bit_vector_t) * width);
 
     uint32_t seed = 42;
     fast_kiss_state32_t state = get_initial_fast_kiss_state32(seed);
 
     bit_vector_t bit_vector_mask = bit_vector_t(~0) << (32-DIM_PARAM);
 
-    for(int i=0; i < height; ++i)
-        Ab[i] = fast_kiss32(&state) & fast_kiss32(&state) & fast_kiss32(&state) & bit_vector_mask;
-    for(int j=0; j < width; ++j)
-        Bb[j] = fast_kiss32(&state) & fast_kiss32(&state) & fast_kiss32(&state) & bit_vector_mask;
+    for(int i=0; i < height; ++i) {
+        Ab[i] = bit_vector_mask;
+        for(int kiss = 0; kiss < num_kiss; ++kiss)
+            Ab[i] &= fast_kiss32(&state);
+    }
+    for(int j=0; j < width; ++j) {
+        Bb[j] = bit_vector_mask;
+        for(int kiss = 0; kiss < num_kiss; ++kiss)
+            Bb[j] &= fast_kiss32(&state);
+    }
 
-    // Malloc for C0 and d_C0
-    // int padded_height = SDIV(height,32) * 32;
-    // int sizeC = width * padded_height / 32;
-    int sizeC = SDIV(width * height, 32);
-    (*C0) = (bit_vector_t *) malloc(sizeof(bit_vector_t) * sizeC);
-    cudaMalloc((void **) d_C0, sizeof(bit_vector_t) * sizeC);                                       CUERR
+    // Malloc for C0b
+    int padded_height_32 = SDIV(height,32);
+    int sizeC = width * padded_height_32;
+    // int sizeC = SDIV(width * height, 32);
+    C0b = (bit_vector_t *) malloc(sizeof(bit_vector_t) * sizeC);
     
     // Set all entries 0
     for (int i = 0; i < sizeC; i++)
-        (*C0)[i] = 0;
+        C0b[i] = 0;
 
     // Create C
     int nonzeroelements = 0;
@@ -41,11 +53,11 @@ void generate_random_matrix(bit_vector_t **C0, bit_vector_t **d_C0,
     for(int j=0; j < width; ++j) {
         for(int i=0; i < height; ++i) {
             if(Ab[i] & Bb[j]) {
-                int index = j*height+i;
-                int intID = index / 32;
-                int intLane = index % 32;
+                // int index = j*height+i;
+                int intId = i / 32 * width + j;
+                int intLane = i % 32;
 
-                (*C0)[intID] |= 1 << (32 - intLane - 1);
+                C0b[intId] |= 1 << (32 - 1 - intLane);
 
                 ++nonzeroelements;
             }
@@ -66,32 +78,27 @@ void generate_random_matrix(bit_vector_t **C0, bit_vector_t **d_C0,
     //                 }
     //             }
     //         }
-    //         (*C0)[] = cj
+    //         (*C0b)[] = cj
     //     }
     // }
     
-    (*density) = (float) nonzeroelements / (width * height);
-
-    cudaMemcpy((*d_C0), (*C0), sizeof(bit_vector_t) * sizeC, cudaMemcpyHostToDevice);               CUERR
+    density = (float) nonzeroelements / (width * height);
        
     printf("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
     printf("MATRIX CREATION COMPLETE\n");
     printf("Height: %i\nWidth: %i\nNon-zero elements: %i\nDensity: %f\n",
-           height, width, nonzeroelements, (*density));
+           height, width, nonzeroelements, density);
     printf("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
-
-    free(Ab);
-    free(Bb);
 }
 
 template<typename bit_vector_t>
-void readInputFileData( bit_vector_t **C0, bit_vector_t **d_C0, 
-                    int *width, int *height, 
-                    float *density, string filename) {
+void readInputFileData( bit_vector_t *&C0,
+                    int &width, int &height, 
+                    float &density, string filename) {
     int x, y;
     int nonzeroelements = 0;
     int sizeC;
-    int intID;
+    int intId;
     int intLane;
     ifstream infile;
     string linestring;
@@ -102,18 +109,18 @@ void readInputFileData( bit_vector_t **C0, bit_vector_t **d_C0,
     getline(infile, linestring);
     stringstream sep(linestring);
     getline(sep, field, ',');
-    (*height) = stoi(field, nullptr);
+    height = stoi(field, nullptr);
     getline(sep, field, ','); 
-    (*width) = stoi(field, nullptr);
+    width = stoi(field, nullptr);
     
     // Malloc for C0 and d_C0
-    sizeC = (int) ceil((*width) * (*height) / (double) 32.0);
-    (*C0) = (bit_vector_t *) malloc(sizeof(bit_vector_t) * sizeC);
-    cudaMalloc((void **) d_C0, sizeof(bit_vector_t) * sizeC);                                       CUERR
+    sizeC = (int) ceil(width * height / (double) 32.0);
+    C0 = (bit_vector_t *) malloc(sizeof(bit_vector_t) * sizeC);
+    // cudaMalloc((void **) d_C0, sizeof(bit_vector_t) * sizeC);                                       CUERR
     
     // Set all entries 0
     for (int i = 0; i < sizeC; i++)
-        (*C0)[i] = 0;
+        C0[i] = 0;
 
     // Read rest of file
     while (getline(infile, linestring)) {
@@ -123,20 +130,20 @@ void readInputFileData( bit_vector_t **C0, bit_vector_t **d_C0,
         y = stoi(fieldtemp, nullptr);
         getline(sep1, fieldtemp, ',');
         x = stoi(fieldtemp, nullptr);
-        intID = (x * (*height) + y) / 32;
-        intLane = (x * (*height) + y) % 32;
-        (*C0)[intID] |= 1 << 32 - intLane - 1;
+        intId = (x * height + y) / 32;
+        intLane = (x * height + y) % 32;
+        C0[intId] |= 1 << 32 - intLane - 1;
         nonzeroelements++;
     }
     
-    (*density) = (double) nonzeroelements / ((*width) * (*height));
+    density = (double) nonzeroelements / (width * height);
 
-    cudaMemcpy((*d_C0), (*C0), sizeof(bit_vector_t) * sizeC, cudaMemcpyHostToDevice);               CUERR
+    // cudaMemcpy((*d_C0), C0, sizeof(bit_vector_t) * sizeC, cudaMemcpyHostToDevice);               CUERR
        
     printf("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
     printf("READING OF .DATA FILE COMPLETE\n");
     printf("Read height: %i\nRead width: %i\nNon-zero elements: %i\nDensity: %f\n",
-           (*height), (*width), nonzeroelements, (*density));
+           height, width, nonzeroelements, density);
     printf("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
 }
 
@@ -147,17 +154,11 @@ bool endsWith(const string& s, const string& suffix) {
 
 // Write result matrix in file
 template<typename bit_vector_t, typename element_t = uint8_t>
-void writeToFiles(bit_vector_t* d_Ab, bit_vector_t* d_Bb, int width, int height){
-    element_t *A, *B;
-    bit_vector_t *Ab, *Bb;
-    A = (element_t*) malloc(sizeof(element_t) * DIM_PARAM * height);
-    Ab = (bit_vector_t*) malloc(sizeof(bit_vector_t) * height);
-    B = (element_t*) malloc(sizeof(element_t) * width * DIM_PARAM);
-    Bb = (bit_vector_t*) malloc(sizeof(bit_vector_t) * width);
-    
-    cudaMemcpy(Ab, d_Ab, sizeof(bit_vector_t) * height, cudaMemcpyDeviceToHost);                              CUERR
-    cudaMemcpy(Bb, d_Bb, sizeof(bit_vector_t) * width, cudaMemcpyDeviceToHost);                               CUERR
-    
+void writeToFiles(bit_vector_t* Ab, bit_vector_t* Bb, int width, int height)
+{
+    element_t *A = (element_t*) malloc(sizeof(element_t) * DIM_PARAM * height);
+    element_t *B = (element_t*) malloc(sizeof(element_t) * width * DIM_PARAM);
+
     for(int i = 0; i < height; i++)
         for(int j = 0; j < DIM_PARAM; j++)
             A[i * DIM_PARAM + j] = (Ab[i] >> 32 - j - 1) & 1;
@@ -208,20 +209,17 @@ void writeToFiles(bit_vector_t* d_Ab, bit_vector_t* d_Bb, int width, int height)
 
 // Initialization of A and B
 template<typename bit_vector_t>
-void initializeFactors( bit_vector_t **Ab, bit_vector_t **Bb, 
-                        bit_vector_t **d_Ab, bit_vector_t **d_Bb, 
+void initializeFactors( bit_vector_t *&Ab, bit_vector_t *&Bb, 
                         int width, int height, 
                         float density, fast_kiss_state32_t *state) {
 
-    (*Ab) = (bit_vector_t *) malloc(sizeof(bit_vector_t) * height);
-    (*Bb) = (bit_vector_t *) malloc(sizeof(bit_vector_t) * width);
-    cudaMalloc((void **) d_Ab, sizeof(bit_vector_t) * height);                                              CUERR
-    cudaMalloc((void **) d_Bb, sizeof(bit_vector_t) * width);                                               CUERR
+    Ab = (bit_vector_t *) malloc(sizeof(bit_vector_t) * height);
+    Bb = (bit_vector_t *) malloc(sizeof(bit_vector_t) * width);
 
     // Initialize A and B and copy to device
     bool threshold;
     for (int i = 0; i < height; i++) {
-        (*Ab)[i] = 0;
+        Ab[i] = 0;
         #pragma unroll
         for (int j = 0; j < DIM_PARAM; j++) {
             switch(INITIALIZATIONMODE) {
@@ -235,11 +233,11 @@ void initializeFactors( bit_vector_t **Ab, bit_vector_t **Bb,
                                         < density;
                                         break;
             }
-            (*Ab)[i] |= threshold ? 1 << (32 - j - 1) : 0 ;
+            Ab[i] |= threshold ? 1 << (32 - j - 1) : 0 ;
         }
     }
     for (int i = 0; i < width; i++) {
-        (*Bb)[i] = 0;
+        Bb[i] = 0;
         #pragma unroll
         for (int j = 0; j < DIM_PARAM; j++) {
             switch(INITIALIZATIONMODE) {
@@ -253,14 +251,10 @@ void initializeFactors( bit_vector_t **Ab, bit_vector_t **Bb,
                                         < density;
                                         break;
             }
-            (*Bb)[i] |= threshold ? 1 << (32 - j - 1) : 0 ;
+            Bb[i] |= threshold ? 1 << (32 - j - 1) : 0 ;
         }
     }
     
-    // copy to device arrays
-    cudaMemcpy((*d_Ab), (*Ab), sizeof(bit_vector_t) * height, cudaMemcpyHostToDevice);                      CUERR
-    cudaMemcpy((*d_Bb), (*Bb), sizeof(bit_vector_t) * width, cudaMemcpyHostToDevice);                       CUERR
-
     printf("Initialization of A and B complete\n");
     printf("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
 }

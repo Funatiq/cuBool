@@ -1,12 +1,13 @@
-#include<stdint.h>
 #ifndef RNGPU_HPP
 #define RNGPU_HPP
+
+#include<stdint.h>
 
 #if defined(__CUDA_ARCH__)
 #define INLINE_QUALIFIERS __host__ __device__ __forceinline__
 #else
 #include <math.h>
-#define INLINE_QUALIFIERS __host__ __device__ __forceinline__
+#define INLINE_QUALIFIERS
 #endif
 
 //////////////////////////////////////////////////////////////////////////////
