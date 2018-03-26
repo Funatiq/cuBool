@@ -86,7 +86,7 @@ int main(int argc, char **argv) {
     }
 
     int padded_width = SDIV(width, 32) * 32;
-    int padded_height = SDIV(height, 32) * 32;
+    // int padded_height = SDIV(height, 32) * 32;
     int padded_height_32 = SDIV(height, 32);
     // int sizeC = width * padded_height_32;
     int sizeC_padded = padded_width * padded_height_32;
@@ -177,12 +177,11 @@ int main(int argc, char **argv) {
         }
 
         // Change col
-        lineToBeChanged = (fast_kiss32(&state) % width) / 32 * 32;
+        lineToBeChanged = (fast_kiss32(&state) % width);
         gpuSeed = ((fast_kiss32(&state) + iterations) % UINT32_MAX);
         vectorMatrixMultCompareCol <<< min(linesAtOnce, width), THREADSPERBLOCK >>>
                                     (d_Ab, d_Bb, d_C0b,
-                                     width, height,
-                                     padded_width, padded_height,
+                                     width, height, padded_width,
                                      lineToBeChanged,
                                      d_error_C0_C, 
                                      gpuSeed,
@@ -190,12 +189,11 @@ int main(int argc, char **argv) {
         cudaDeviceSynchronize();                                                                                CUERR
 
         // Change row
-        lineToBeChanged = fast_kiss32(&state) % height / 32 * 32;
+        lineToBeChanged = fast_kiss32(&state) % height;
         gpuSeed = ((fast_kiss32(&state) + iterations) % UINT32_MAX);
         vectorMatrixMultCompareRow <<< min(linesAtOnce, height), THREADSPERBLOCK >>>
                                     (d_Ab, d_Bb, d_C0b,
-                                     width, height,
-                                     padded_width, padded_height,
+                                     width, height, padded_width,
                                      lineToBeChanged,
                                      d_error_C0_C, 
                                      gpuSeed, temperature);        CUERR

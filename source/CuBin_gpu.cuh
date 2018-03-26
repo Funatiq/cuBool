@@ -67,12 +67,11 @@ template<typename bit_vector_t>
 __global__ void
 vectorMatrixMultCompareRow( bit_vector_t *A, bit_vector_t *B, bit_vector_t *C, 
                             const int width, const int height,
-                            const int padded_width, const int padded_height,
+                            const int padded_width,
                             const int startrow, int *global_error,
                             const uint32_t seed, const float temperature) {
 
-    int rowToBeChanged = (blockIdx.x + startrow) % padded_height;
-    if (rowToBeChanged >= height) return;
+    int rowToBeChanged = (blockIdx.x + startrow) % height;
 
     fast_kiss_state32_t state;
     __shared__ int reductionArray[32];
@@ -121,12 +120,11 @@ template<typename bit_vector_t>
 __global__ void
 vectorMatrixMultCompareCol(bit_vector_t *A, bit_vector_t *B, bit_vector_t *C, 
                             const int width, const int height,
-                            const int padded_width, const int padded_height,
+                            const int padded_width,
                             const int startcol, int *global_error,
                             const uint32_t seed, const float temperature) {
 
-    int colToBeChanged = (blockIdx.x + startcol) % padded_width;
-    if (colToBeChanged >= width) return;
+    int colToBeChanged = (blockIdx.x + startcol) % width;
 
     fast_kiss_state32_t state;
     __shared__ int reductionArray[32];
