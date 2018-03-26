@@ -58,7 +58,8 @@ int main(int argc, char **argv) {
     int iterationsTillReduced = argc > 8 && atoi(argv[8]) > 0 ? atoi(argv[8]) : std::numeric_limits<int>::max();
     float tempFactor = argc > 9 ? atof(argv[9]) : 0.9f;
     //int seed = argc > 10 ? atoi(argv[10]) : 41;
-    uint32_t seed = (unsigned long)time(NULL) % UINT32_MAX;
+    // uint32_t seed = (unsigned long)time(NULL) % UINT32_MAX;
+    uint32_t seed = 40;
     fast_kiss_state32_t state = get_initial_fast_kiss_state32(seed);
     
     // Discard first 100000 entries of PRNG
@@ -105,9 +106,9 @@ int main(int argc, char **argv) {
 
     // Initialize Ab, Bb, d_Ab, d_Bb, all bitwise used matrices
     my_bit_vector_t *Ab, *Bb;
-    Ab = A0b;
-    Bb = B0b;
-    // initializeFactors(Ab, Bb, width, height, density, &state);
+    // Ab = A0b;
+    // Bb = B0b;
+    initializeFactors(Ab, Bb, width, height, density, &state);
 
     my_bit_vector_t *d_Ab, *d_Bb;
     cudaMalloc((void **) &d_Ab, sizeof(my_bit_vector_t) * height);                                              CUERR
@@ -177,9 +178,9 @@ int main(int argc, char **argv) {
         }
 
         // Change col
-        lineToBeChanged = (fast_kiss32(&state) % width);
+        lineToBeChanged = (fast_kiss32(&state) % width) / WARPSPERBLOCK * WARPSPERBLOCK;
         gpuSeed = ((fast_kiss32(&state) + iterations) % UINT32_MAX);
-        vectorMatrixMultCompareCol <<< min(linesAtOnce, width), THREADSPERBLOCK >>>
+        vectorMatrixMultCompareColWarp <<< SDIV(min(linesAtOnce, width), WARPSPERBLOCK), WARPSPERBLOCK*32 >>>
                                     (d_Ab, d_Bb, d_C0b,
                                      width, height, padded_width,
                                      lineToBeChanged,
@@ -189,9 +190,9 @@ int main(int argc, char **argv) {
         cudaDeviceSynchronize();                                                                                CUERR
 
         // Change row
-        lineToBeChanged = fast_kiss32(&state) % height;
+        lineToBeChanged = fast_kiss32(&state) % height / WARPSPERBLOCK * WARPSPERBLOCK;
         gpuSeed = ((fast_kiss32(&state) + iterations) % UINT32_MAX);
-        vectorMatrixMultCompareRow <<< min(linesAtOnce, height), THREADSPERBLOCK >>>
+        vectorMatrixMultCompareRowWarp <<< SDIV(min(linesAtOnce, height), WARPSPERBLOCK), WARPSPERBLOCK*32 >>>
                                     (d_Ab, d_Bb, d_C0b,
                                      width, height, padded_width,
                                      lineToBeChanged,
