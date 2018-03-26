@@ -66,11 +66,13 @@ bool metro(fast_kiss_state32_t * state, int error, float temperature) {
 template<typename bit_vector_t>
 __global__ void
 vectorMatrixMultCompareRow( bit_vector_t *A, bit_vector_t *B, bit_vector_t *C, 
-                            int width, int height, 
-                            int startrow, int *global_error,
-                            uint32_t seed, float temperature) {
+                            const int width, const int height,
+                            const int padded_width, const int padded_height,
+                            const int startrow, int *global_error,
+                            const uint32_t seed, const float temperature) {
 
-    int rowToBeChanged = (blockIdx.x + startrow) % height;
+    int rowToBeChanged = (blockIdx.x + startrow) % padded_height;
+    if (rowToBeChanged >= height) return;
 
     fast_kiss_state32_t state;
     __shared__ int reductionArray[32];
@@ -88,16 +90,16 @@ vectorMatrixMultCompareRow( bit_vector_t *A, bit_vector_t *B, bit_vector_t *C,
     bit_vector_t currentRow_changed = shared_currentRow_changed;
     int error_thread = 0;
     for (int j = threadIdx.x; j < width; j += blockDim.x) {
-        if (j < width) {
+        // if (rowToBeChanged < height) {
             bit_vector_t currentColThread = B[j];
-            int intId = rowToBeChanged / 32 * width + j;
+            int intId = rowToBeChanged / 32 * padded_width + j;
             int intLane = rowToBeChanged % 32;
             int cTruthEntry = (C[intId] >> (32 - intLane - 1)) & 1; 
 
             int cEntryOld = (currentRow         & currentColThread) ? 1 : 0;
             int cEntryNew = (currentRow_changed & currentColThread) ? 1 : 0;
             error_thread += (cEntryNew ^ cTruthEntry) - (cEntryOld ^ cTruthEntry);
-        }
+        // }
     }
     __syncthreads();
 
@@ -118,11 +120,13 @@ vectorMatrixMultCompareRow( bit_vector_t *A, bit_vector_t *B, bit_vector_t *C,
 template<typename bit_vector_t>
 __global__ void
 vectorMatrixMultCompareCol(bit_vector_t *A, bit_vector_t *B, bit_vector_t *C, 
-                            int width, int height, 
-                            int startcol, int *global_error,
-                            uint32_t seed, float temperature) {
+                            const int width, const int height,
+                            const int padded_width, const int padded_height,
+                            const int startcol, int *global_error,
+                            const uint32_t seed, const float temperature) {
 
-    int colToBeChanged = (blockIdx.x + startcol) % width;
+    int colToBeChanged = (blockIdx.x + startcol) % padded_width;
+    if (colToBeChanged >= width) return;
 
     fast_kiss_state32_t state;
     __shared__ int reductionArray[32];
@@ -140,16 +144,16 @@ vectorMatrixMultCompareCol(bit_vector_t *A, bit_vector_t *B, bit_vector_t *C,
     bit_vector_t currentCol_changed = shared_currentCol_changed;
     int error_thread = 0;
     for (int i = threadIdx.x; i < height; i += blockDim.x) {
-        if (i < height) {
+        // if (colToBeChanged < width) {
             bit_vector_t currentRowThread = A[i];
-            int intId = i / 32 * width + colToBeChanged;
+            int intId = i / 32 * padded_width + colToBeChanged;
             int intLane = i % 32;
             int cTruthEntry = (C[intId] >> (32 - intLane - 1)) & 1; 
             
             int cEntryOld = (currentCol         & currentRowThread) > 0 ? 1 : 0;        
             int cEntryNew = (currentCol_changed & currentRowThread) > 0 ? 1 : 0;
             error_thread += (cEntryNew ^ cTruthEntry) - (cEntryOld ^ cTruthEntry);
-        }
+        // }
     }
     __syncthreads();
 
@@ -170,7 +174,7 @@ vectorMatrixMultCompareCol(bit_vector_t *A, bit_vector_t *B, bit_vector_t *C,
 // Used for debugging and checking for correctness, not optimized
 template<typename bit_vector_t, typename element_t = uint32_t>
 void aftertestGPU(  bit_vector_t *d_Ab, bit_vector_t *d_Bb, bit_vector_t *d_C0b, 
-                    int width, int height) {
+                    int width, int height, int padded_width) {
     TIMERSTART(aftertestGPU)
 
     element_t *A = (element_t*) malloc(sizeof(element_t) * DIM_PARAM * height);
@@ -180,7 +184,8 @@ void aftertestGPU(  bit_vector_t *d_Ab, bit_vector_t *d_Bb, bit_vector_t *d_C0b,
     bit_vector_t *Ab = (bit_vector_t*) malloc(sizeof(bit_vector_t) * height);
     bit_vector_t *Bb = (bit_vector_t*) malloc(sizeof(bit_vector_t) * width);
 
-    int sizeCb = (int) ceil(width * height / (double) 32.0);
+    int padded_height_32 = SDIV(height,32);
+    int sizeCb = width * padded_height_32;
     // int sizeCb = ((long long) (height * width) / 32.0 + 1);
     bit_vector_t *C0b = (bit_vector_t*) malloc(sizeof(bit_vector_t) * sizeCb);
     
@@ -190,7 +195,11 @@ void aftertestGPU(  bit_vector_t *d_Ab, bit_vector_t *d_Bb, bit_vector_t *d_C0b,
     
     cudaMemcpy(Ab, d_Ab, sizeof(bit_vector_t) * height, cudaMemcpyDeviceToHost);                                CUERR
     cudaMemcpy(Bb, d_Bb, sizeof(bit_vector_t) * width, cudaMemcpyDeviceToHost);                                 CUERR
-    cudaMemcpy(C0b, d_C0b, sizeof(bit_vector_t) * sizeCb, cudaMemcpyDeviceToHost);                              CUERR
+    cudaMemcpy2D(C0b, sizeof(bit_vector_t) * width,
+                 d_C0b, sizeof(bit_vector_t) * padded_width,
+                 sizeof(bit_vector_t) * width,
+                 padded_height_32,
+                 cudaMemcpyDeviceToHost);                              CUERR
 
     uint32_t counterDensity = 0;
     for(int i = 0; i < height; i++){
@@ -229,7 +238,7 @@ void aftertestGPU(  bit_vector_t *d_Ab, bit_vector_t *d_Bb, bit_vector_t *d_C0b,
     element_t *d_C_test_GPU;
     cudaMalloc((void **) &d_C_test_GPU, sizeof(element_t) * height * width);                             CUERR
     
-    matrixMultiply <<< width / THREADSPERBLOCK + 1, THREADSPERBLOCK >>> 
+    matrixMultiply <<< SDIV(width, THREADSPERBLOCK), THREADSPERBLOCK >>> 
                         (d_Ab, d_Bb, d_C_test_GPU, width, height);                                      CUERR
                         
     cudaMemcpy(C_test_GPU, d_C_test_GPU, sizeof(element_t) * height * width, 
@@ -262,7 +271,7 @@ void aftertestGPU(  bit_vector_t *d_Ab, bit_vector_t *d_Bb, bit_vector_t *d_C0b,
 template<typename bit_vector_t>
 __global__ void
 vectorMatrixMultCompareRowWarp( bit_vector_t *A, bit_vector_t *B, bit_vector_t *C, 
-                            int width, int height, 
+                            int width, int height, int padded_width,
                             int startrow, int *global_error,
                             uint32_t seed, float temperature) {
 
@@ -283,7 +292,7 @@ vectorMatrixMultCompareRowWarp( bit_vector_t *A, bit_vector_t *B, bit_vector_t *
     for (int j = threadIdx.x; j < width; j += blockDim.x) {
         if (j < width) {
             bit_vector_t currentColThread = B[j];
-            int intId = rowToBeChanged / 32 * width + j;
+            int intId = rowToBeChanged / 32 * padded_width + j;
             int intLane = rowToBeChanged % 32;
             int cTruthEntry = (C[intId] >> (32 - intLane - 1)) & 1; 
 
@@ -309,7 +318,7 @@ vectorMatrixMultCompareRowWarp( bit_vector_t *A, bit_vector_t *B, bit_vector_t *
 template<typename bit_vector_t>
 __global__ void
 vectorMatrixMultCompareColWarp(bit_vector_t *A, bit_vector_t *B, bit_vector_t *C, 
-                            int width, int height, 
+                            int width, int height, int padded_width,
                             int startcol, int *global_error,
                             uint32_t seed, float temperature) {
 
@@ -330,7 +339,7 @@ vectorMatrixMultCompareColWarp(bit_vector_t *A, bit_vector_t *B, bit_vector_t *C
     for (int i = threadIdx.x; i < height; i += blockDim.x) {
         if (i < height) {
             bit_vector_t currentRowThread = A[i];
-            int intId = i / 32 * width + colToBeChanged;
+            int intId = i / 32 * padded_width + colToBeChanged;
             int intLane = i % 32;
             int cTruthEntry = (C[intId] >> (32 - intLane - 1)) & 1; 
             

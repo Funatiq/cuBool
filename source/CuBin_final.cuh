@@ -2,12 +2,13 @@
 #define CUBIN_FINAL
 
 template<typename bit_vector_t>
-void computeStartError(bit_vector_t *d_Ab, bit_vector_t *d_Bb, bit_vector_t *d_Cb, 
-                        int width, int height,
-                        int *&d_distance_C0_C_start, int &distance_C0_C_start);
+void computeError(bit_vector_t *d_Ab, bit_vector_t *d_Bb, bit_vector_t *d_Cb, 
+                  int width, int height, int padded_width,
+                  int *&d_distance_C0_C_start, int &distance_C0_C_start);
 
 template<typename bit_vector_t>
-void checkDistance(bit_vector_t *d_Ab, bit_vector_t *d_Bb, bit_vector_t *d_C0b, int height, int width);
+void checkDistance(bit_vector_t *d_Ab, bit_vector_t *d_Bb, bit_vector_t *d_C0b,
+                   int height, int width, int padded_width);
 
 // template<typename bit_vector_t, typename element_t = uint32_t>
 // void aftertestGPU(bit_vector_t *d_Ab, bit_vector_t *d_Bb, bit_vector_t *d_C0b, 

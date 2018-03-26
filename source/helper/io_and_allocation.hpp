@@ -39,12 +39,12 @@ void generate_random_matrix(int width, int height, int num_kiss, bit_vector_t * 
 
     // Malloc for C0b
     int padded_height_32 = SDIV(height,32);
-    int sizeC = width * padded_height_32;
+    int sizeCb = width * padded_height_32;
     // int sizeC = SDIV(width * height, 32);
-    C0b = (bit_vector_t *) malloc(sizeof(bit_vector_t) * sizeC);
+    C0b = (bit_vector_t *) malloc(sizeof(bit_vector_t) * sizeCb);
     
     // Set all entries 0
-    for (int i = 0; i < sizeC; i++)
+    for (int i = 0; i < sizeCb; i++)
         C0b[i] = 0;
 
     // Create C
@@ -116,7 +116,6 @@ void readInputFileData( bit_vector_t *&C0,
     // Malloc for C0 and d_C0
     sizeC = (int) ceil(width * height / (double) 32.0);
     C0 = (bit_vector_t *) malloc(sizeof(bit_vector_t) * sizeC);
-    // cudaMalloc((void **) d_C0, sizeof(bit_vector_t) * sizeC);                                       CUERR
     
     // Set all entries 0
     for (int i = 0; i < sizeC; i++)
@@ -138,8 +137,6 @@ void readInputFileData( bit_vector_t *&C0,
     
     density = (double) nonzeroelements / (width * height);
 
-    // cudaMemcpy((*d_C0), C0, sizeof(bit_vector_t) * sizeC, cudaMemcpyHostToDevice);               CUERR
-       
     printf("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
     printf("READING OF .DATA FILE COMPLETE\n");
     printf("Read height: %i\nRead width: %i\nNon-zero elements: %i\nDensity: %f\n",
