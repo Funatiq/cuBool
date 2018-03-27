@@ -1,4 +1,5 @@
 FLAGS = -std=c++11 -arch=sm_61 -Xcompiler="-fopenmp" -O3 -lineinfo
+DEBUG = -g -G
 
 HEADERS = \
 	source/CuBin_final.cuh \
@@ -9,6 +10,8 @@ HEADERS = \
 	source/helper/rngpu.hpp \
 	source/helper/matrix_mult.cuh \
 	source/helper/io_and_allocation.hpp
+
+all: CuBin
 
 CuBin: source/CuBin_final.cu $(HEADERS)
 	nvcc source/CuBin_final.cu $(FLAGS) -o CuBin $(MAKROS)

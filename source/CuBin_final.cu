@@ -59,7 +59,7 @@ int main(int argc, char **argv) {
     float tempFactor = argc > 9 ? atof(argv[9]) : 0.9f;
     //int seed = argc > 10 ? atoi(argv[10]) : 41;
     // uint32_t seed = (unsigned long)time(NULL) % UINT32_MAX;
-    uint32_t seed = 42;
+    uint32_t seed = 47;
     fast_kiss_state32_t state = get_initial_fast_kiss_state32(seed);
     
     // Discard first 100000 entries of PRNG
@@ -77,9 +77,9 @@ int main(int argc, char **argv) {
         readInputFileData(C0b, height, width, density, filename);
     } else if (filename.compare("test") == 0) {
         height = 5000;
-        // width = 5000;
+        width = 5000;
         // height = 5*1024;
-        width = 5*1024;
+        // width = 5*1024;
         generate_random_matrix(height, width, 3, A0b, B0b, C0b, density);
         // free(A0b);
         // free(B0b);
@@ -187,13 +187,13 @@ int main(int argc, char **argv) {
             // #endif
             // For debugging
             // if (error_C0_C < 0)
-                checkDistance(d_Ab, d_Bb, d_C0b, height, width, padded_width);
+                // checkDistance(d_Ab, d_Bb, d_C0b, height, width, padded_width);
         }
 
         // Change row
         lineToBeChanged = fast_kiss32(&state) % height / WARPSPERBLOCK * WARPSPERBLOCK;
         gpuSeed = ((fast_kiss32(&state) + iterations) % UINT32_MAX);
-        vectorMatrixMultCompareRowWarpShared  <<< SDIV(min(linesAtOnce, height), WARPSPERBLOCK), WARPSPERBLOCK*32 >>>
+        vectorMatrixMultCompareRowWarpShared <<< SDIV(min(linesAtOnce, height), WARPSPERBLOCK), WARPSPERBLOCK*32 >>>
                                     (d_Ab, d_Bb, d_C0b,
                                      height, width, padded_width,
                                      lineToBeChanged,
@@ -204,7 +204,7 @@ int main(int argc, char **argv) {
         // Change col
         lineToBeChanged = (fast_kiss32(&state) % width) / WARPSPERBLOCK * WARPSPERBLOCK;
         gpuSeed = ((fast_kiss32(&state) + iterations) % UINT32_MAX);
-        vectorMatrixMultCompareColWarp <<< SDIV(min(linesAtOnce, width), WARPSPERBLOCK), WARPSPERBLOCK*32 >>>
+        vectorMatrixMultCompareColWarpShared <<< SDIV(min(linesAtOnce, width), WARPSPERBLOCK), WARPSPERBLOCK*32 >>>
                                     (d_Ab, d_Bb, d_C0b,
                                      height, width, padded_width,
                                      lineToBeChanged,
