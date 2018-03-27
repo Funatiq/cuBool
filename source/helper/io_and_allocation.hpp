@@ -11,12 +11,13 @@
 #ifndef SDIV
 // safe division
 #define SDIV(x,y)(((x)+(y)-1)/(y))
+// #define SDIV(x,y)(((x)-1)/(y)+1)
 #endif
 
 using namespace std;
 
 template<typename bit_vector_t>
-void generate_random_matrix(int width, int height, int num_kiss, bit_vector_t * &Ab, bit_vector_t * &Bb, bit_vector_t * &C0b, float &density) {
+void generate_random_matrix(int height, int width, int num_kiss, bit_vector_t * &Ab, bit_vector_t * &Bb, bit_vector_t * &C0b, float &density) {
 
     Ab = (bit_vector_t *) malloc(sizeof(bit_vector_t) * height);
     Bb = (bit_vector_t *) malloc(sizeof(bit_vector_t) * width);
@@ -38,9 +39,9 @@ void generate_random_matrix(int width, int height, int num_kiss, bit_vector_t * 
     }
 
     // Malloc for C0b
-    int padded_height_32 = SDIV(height,32);
-    int sizeCb = width * padded_height_32;
-    // int sizeC = SDIV(width * height, 32);
+    int padded_height_32 = SDIV(height, 32);
+    int sizeCb = padded_height_32 * width;
+    // int sizeC = SDIV(height * width, 32);
     C0b = (bit_vector_t *) malloc(sizeof(bit_vector_t) * sizeCb);
     
     // Set all entries 0
@@ -82,7 +83,7 @@ void generate_random_matrix(int width, int height, int num_kiss, bit_vector_t * 
     //     }
     // }
     
-    density = (float) nonzeroelements / (width * height);
+    density = (float) nonzeroelements / (height * width);
        
     printf("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
     printf("MATRIX CREATION COMPLETE\n");
@@ -92,14 +93,9 @@ void generate_random_matrix(int width, int height, int num_kiss, bit_vector_t * 
 }
 
 template<typename bit_vector_t>
-void readInputFileData( bit_vector_t *&C0,
-                    int &width, int &height, 
+void readInputFileData( bit_vector_t *&C0b,
+                    int &height, int &width, 
                     float &density, string filename) {
-    int x, y;
-    int nonzeroelements = 0;
-    int sizeC;
-    int intId;
-    int intLane;
     ifstream infile;
     string linestring;
     string field;
@@ -113,29 +109,31 @@ void readInputFileData( bit_vector_t *&C0,
     getline(sep, field, ','); 
     width = stoi(field, nullptr);
     
-    // Malloc for C0 and d_C0
-    sizeC = (int) ceil(width * height / (double) 32.0);
-    C0 = (bit_vector_t *) malloc(sizeof(bit_vector_t) * sizeC);
+    // Malloc for C0b
+    int padded_height_32 = SDIV(height,32);
+    int sizeCb = padded_height_32 * width;
+    C0b = (bit_vector_t *) malloc(sizeof(bit_vector_t) * sizeCb);
     
     // Set all entries 0
-    for (int i = 0; i < sizeC; i++)
-        C0[i] = 0;
+    for (int i = 0; i < sizeCb; i++)
+        C0b[i] = 0;
 
     // Read rest of file
+    int nonzeroelements = 0;
     while (getline(infile, linestring)) {
         stringstream sep1(linestring);
         string fieldtemp;
         getline(sep1, fieldtemp, ',');
-        y = stoi(fieldtemp, nullptr);
+        int x = stoi(fieldtemp, nullptr);
         getline(sep1, fieldtemp, ',');
-        x = stoi(fieldtemp, nullptr);
-        intId = (x * height + y) / 32;
-        intLane = (x * height + y) % 32;
-        C0[intId] |= 1 << 32 - intLane - 1;
+        int y = stoi(fieldtemp, nullptr);
+        int intId = x / 32 * width + y;
+        int intLane = x % 32;
+        C0b[intId] |= 1 << 32 - intLane - 1;
         nonzeroelements++;
     }
     
-    density = (double) nonzeroelements / (width * height);
+    density = (double) nonzeroelements / (height * width);
 
     printf("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
     printf("READING OF .DATA FILE COMPLETE\n");
@@ -151,7 +149,7 @@ bool endsWith(const string& s, const string& suffix) {
 
 // Write result matrix in file
 template<typename bit_vector_t, typename element_t = uint8_t>
-void writeToFiles(bit_vector_t* Ab, bit_vector_t* Bb, int width, int height)
+void writeToFiles(bit_vector_t* Ab, bit_vector_t* Bb, int height, int width)
 {
     element_t *A = (element_t*) malloc(sizeof(element_t) * DIM_PARAM * height);
     element_t *B = (element_t*) malloc(sizeof(element_t) * width * DIM_PARAM);
@@ -207,48 +205,54 @@ void writeToFiles(bit_vector_t* Ab, bit_vector_t* Bb, int width, int height)
 // Initialization of A and B
 template<typename bit_vector_t>
 void initializeFactors( bit_vector_t *&Ab, bit_vector_t *&Bb, 
-                        int width, int height, 
+                        int height, int width,
+                        int padded_height, int padded_width, 
                         float density, fast_kiss_state32_t *state) {
 
-    Ab = (bit_vector_t *) malloc(sizeof(bit_vector_t) * height);
-    Bb = (bit_vector_t *) malloc(sizeof(bit_vector_t) * width);
+    Ab = (bit_vector_t *) malloc(sizeof(bit_vector_t) * padded_height);
+    Bb = (bit_vector_t *) malloc(sizeof(bit_vector_t) * padded_width);
 
     // Initialize A and B and copy to device
     bool threshold;
-    for (int i = 0; i < height; i++) {
+    for (int i = 0; i < padded_height; i++) {
         Ab[i] = 0;
-        #pragma unroll
-        for (int j = 0; j < DIM_PARAM; j++) {
-            switch(INITIALIZATIONMODE) {
-                case 1: threshold = (fast_kiss32(state) / (double) UINT32_MAX) 
-                                        < (sqrt(1 - pow(1 - density, 1 / (double) DIM_PARAM)));
-                                        break;
-                case 2: threshold = (fast_kiss32(state) / (double) UINT32_MAX) 
-                                        < (density / (double) 100);
-                                        break;
-                case 3: threshold = (fast_kiss32(state) / (double) UINT32_MAX) 
-                                        < density;
-                                        break;
+        if (i < height) {
+            #pragma unroll
+            for (int j = 0; j < DIM_PARAM; j++) {
+                switch(INITIALIZATIONMODE) {
+                    case 1: threshold = (fast_kiss32(state) / (double) UINT32_MAX) 
+                                            < (sqrt(1 - pow(1 - density, 1 / (double) DIM_PARAM)));
+                                            break;
+                    case 2: threshold = (fast_kiss32(state) / (double) UINT32_MAX) 
+                                            < (density / (double) 100);
+                                            break;
+                    case 3: threshold = (fast_kiss32(state) / (double) UINT32_MAX) 
+                                            < density;
+                                            break;
+                }
+                Ab[i] |= threshold ? 1 << (32 - j - 1) : 0 ;
             }
-            Ab[i] |= threshold ? 1 << (32 - j - 1) : 0 ;
         }
     }
-    for (int i = 0; i < width; i++) {
+
+    for (int i = 0; i < padded_width; i++) {
         Bb[i] = 0;
-        #pragma unroll
-        for (int j = 0; j < DIM_PARAM; j++) {
-            switch(INITIALIZATIONMODE) {
-                case 1: threshold = (fast_kiss32(state) / (double) UINT32_MAX) 
-                                        < (sqrt(1 - pow(1 - density, 1 / (double) DIM_PARAM)));
-                                        break;
-                case 2: threshold = (fast_kiss32(state) / (double) UINT32_MAX) 
-                                        < (density / (double) 100);
-                                        break;
-                case 3: threshold = (fast_kiss32(state) / (double) UINT32_MAX) 
-                                        < density;
-                                        break;
+        if (i < width) {
+            #pragma unroll
+            for (int j = 0; j < DIM_PARAM; j++) {
+                switch(INITIALIZATIONMODE) {
+                    case 1: threshold = (fast_kiss32(state) / (double) UINT32_MAX) 
+                                            < (sqrt(1 - pow(1 - density, 1 / (double) DIM_PARAM)));
+                                            break;
+                    case 2: threshold = (fast_kiss32(state) / (double) UINT32_MAX) 
+                                            < (density / (double) 100);
+                                            break;
+                    case 3: threshold = (fast_kiss32(state) / (double) UINT32_MAX) 
+                                            < density;
+                                            break;
+                }
+                Bb[i] |= threshold ? 1 << (32 - j - 1) : 0 ;
             }
-            Bb[i] |= threshold ? 1 << (32 - j - 1) : 0 ;
         }
     }
     
