@@ -1,28 +1,7 @@
 #ifndef CUBIN_GPU_CUH
 #define CUBIN_GPU_CUH
 
-#define FULLMASK 0xffffffff
-
-__inline__ __device__
-int warpReduceSum(int val, unsigned mask = FULLMASK) {
-    for (int offset = warpSize / 2; offset > 0; offset /= 2)
-        val += __shfl_down_sync(mask, val, offset);
-    return val;
-}
-
-__inline__ __device__
-int blockReduceSum(int val, int* reductionArray) {
-    int lane = threadIdx.x % warpSize;
-    int wid = threadIdx.x / warpSize;
-    val = warpReduceSum(val);
-    if (lane == 0) reductionArray[wid] = val;
-    __syncthreads();
-    if (wid == 0) {
-        val = (threadIdx.x < blockDim.x / warpSize) ? reductionArray[lane] : 0;
-        val = warpReduceSum(val);
-    }
-    return val;
-}
+#include "helper/cuda_helpers.cuh"
 
 template <int rand_depth = 3>
 __inline__ __device__

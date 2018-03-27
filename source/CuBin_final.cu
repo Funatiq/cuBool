@@ -23,16 +23,21 @@
 #include "helper/cuda_helpers.cuh"
 #include "helper/rngpu.hpp"
 #include "helper/io_and_allocation.hpp"
+#include "helper/compute_error.cuh"
 
 #include "CuBin_cpu.cuh"
 #include "CuBin_gpu.cuh"
 
-#include "CuBin_final.cuh"
+// #include "CuBin_final.cuh"
 
 using namespace std;
 
 using my_bit_vector_t = uint32_t; // only tested uint32_t
 // using uint32_max = std::numeric_limits<uint32_t>::max();
+
+
+
+
 
 int main(int argc, char **argv) {
     // cudaProfilerStart();
@@ -167,11 +172,11 @@ int main(int argc, char **argv) {
 
     TIMERSTART(GPUKERNELLOOP)
     while (
-        // threshold < error_C0_C
-        // && 
+        threshold < error_C0_C
+        && 
         iterations < gpuiterations
-        // && 
-        // iterationsNoImp < maxIterationsNoImp
+        && 
+        iterationsNoImp < maxIterationsNoImp
         )
     {
         iterations++;
@@ -304,72 +309,5 @@ int main(int argc, char **argv) {
     cudaFree(d_error_C0_C);
     // cudaFree(d_error_C0_C_start);
     return 0;
-}
-
-
-
-// Start error kernel
-__global__
-void computeFullError(const uint32_t *Ab, const uint32_t *Bb, const uint32_t *Cb, 
-                      const int height, const int width,const int padded_width,
-                      int *distance_test) {
-    int j = threadIdx.x + blockIdx.x * blockDim.x;
-    //__shared__ volatile int shared_distance[THREADSPERBLOCK];
-    //shared_distance[threadIdx.x] = 0;
-    __shared__ int reductionArray[32];
-    
-    int error_thread = 0;
-    if (j < width) {
-        for (int i = 0; i < height; i++) {
-            int lineSum = (Ab[i] & Bb[j]) ? 1 : 0;
-            int intId = i / 32 * padded_width + j;
-            int intLane = i % 32;
-            // int intId = (j * height + i) / 32;
-            // int intLane = (j * height + i) % 32;
-            int truthEntry = (Cb[intId] >> (32 - intLane - 1)) & 1; 
-            error_thread += lineSum ^ truthEntry;
-        }
-    }
-    __syncthreads();
-    
-    int error_block = blockReduceSum(error_thread, reductionArray);
-    // Thread with threadIdx.x==0 now has total error of block
-
-   if (threadIdx.x == 0) {
-        atomicAdd(distance_test, error_block);
-   }
-}
-
-template<typename bit_vector_t>
-void computeError(const bit_vector_t *d_Ab, const bit_vector_t *d_Bb, const bit_vector_t *d_Cb, 
-                  const int height, const int width, const int padded_width,
-                  int *&d_distance_C0_C, int &distance_C0_C)
-{
-
-    cudaMalloc((void **) &d_distance_C0_C, sizeof(int));                                                       CUERR
-    cudaMemset(d_distance_C0_C, 0, sizeof(int));                                                       CUERR
-    // cudaMemcpy(d_distance_C0_C, &distance_C0_C, sizeof(int), cudaMemcpyHostToDevice);                     CUERR
-
-    computeFullError <<< SDIV(width, THREADSPERBLOCK), THREADSPERBLOCK >>>
-                        (d_Ab, d_Bb, d_Cb, height, width, padded_width, d_distance_C0_C);                    CUERR
-    
-    cudaMemcpy(&distance_C0_C, d_distance_C0_C, sizeof(int), cudaMemcpyDeviceToHost);     CUERR
-}
-
-// Only for debugging
-template<typename bit_vector_t>
-void checkDistance(const bit_vector_t *d_Ab, const bit_vector_t *d_Bb, const bit_vector_t *d_C0b,
-                   const int height, const int width, const int padded_width)
-{
-    int distance_test;
-    int *d_distance_test;
-    // distance_test = 0;
-
-    computeError(d_Ab, d_Bb, d_C0b, height, width, padded_width, d_distance_test, distance_test);
-
-    cudaFree(d_distance_test); CUERR
-
-    printf("Real Error: \t%f\n",
-           distance_test / ((double) height * width));
 }
 

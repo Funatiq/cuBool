@@ -57,4 +57,29 @@
 // safe division
 #define SDIV(x,y)(((x)+(y)-1)/(y))
 
+
+
+#define FULLMASK 0xffffffff
+
+__inline__ __device__
+int warpReduceSum(int val, unsigned mask = FULLMASK) {
+    for (int offset = warpSize / 2; offset > 0; offset /= 2)
+        val += __shfl_down_sync(mask, val, offset);
+    return val;
+}
+
+__inline__ __device__
+int blockReduceSum(int val, int* reductionArray) {
+    int lane = threadIdx.x % warpSize;
+    int wid = threadIdx.x / warpSize;
+    val = warpReduceSum(val);
+    if (lane == 0) reductionArray[wid] = val;
+    __syncthreads();
+    if (wid == 0) {
+        val = (threadIdx.x < blockDim.x / warpSize) ? reductionArray[lane] : 0;
+        val = warpReduceSum(val);
+    }
+    return val;
+}
+
 #endif

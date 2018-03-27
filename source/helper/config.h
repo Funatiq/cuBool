@@ -1,9 +1,6 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
-// #define BLOCKSPERGRID 1024
-#define TILE_WIDTH 32
-
 #ifndef THREADSPERBLOCK
 #define THREADSPERBLOCK 128
 #endif

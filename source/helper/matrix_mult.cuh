@@ -1,6 +1,8 @@
 #ifndef MATRIX_MULT_CUH
 #define MATRIX_MULT_CUH
 
+#define TILE_WIDTH 32
+
 // Each thread one entry of a row
 template<typename bit_vector_t, typename element_t>
 __global__ void matrixMultiply( bit_vector_t *A, bit_vector_t *B, element_t *C, 
