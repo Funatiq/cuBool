@@ -4,6 +4,7 @@
 #include <string>
 #include <sstream>
 #include <fstream>
+#include <bitset>
 
 #include "config.h"
 #include "rngpu.hpp"
@@ -17,23 +18,27 @@
 using namespace std;
 
 template<typename bit_vector_t>
-void generate_random_matrix(int height, int width, int num_kiss, bit_vector_t * &Ab, bit_vector_t * &Bb, bit_vector_t * &C0b, float &density) {
+void generate_random_matrix(int height, int width, int num_kiss, 
+                            vector<bit_vector_t> &Ab, vector<bit_vector_t> &Bb, vector<bit_vector_t> &C0b,
+                            float &density)
+{
+    bit_vector_t bit_vector_mask = bit_vector_t(~0) << (32-DIM_PARAM);
 
-    Ab = (bit_vector_t *) malloc(sizeof(bit_vector_t) * height);
-    Bb = (bit_vector_t *) malloc(sizeof(bit_vector_t) * width);
+    Ab.clear();
+    Ab.resize(height, bit_vector_mask);
+    Bb.clear();
+    Bb.resize(width, bit_vector_mask);
 
     uint32_t seed = 42;
     fast_kiss_state32_t state = get_initial_fast_kiss_state32(seed);
 
-    bit_vector_t bit_vector_mask = bit_vector_t(~0) << (32-DIM_PARAM);
-
     for(int i=0; i < height; ++i) {
-        Ab[i] = bit_vector_mask;
+        // Ab[i] = bit_vector_mask;
         for(int kiss = 0; kiss < num_kiss; ++kiss)
             Ab[i] &= fast_kiss32(&state);
     }
     for(int j=0; j < width; ++j) {
-        Bb[j] = bit_vector_mask;
+        // Bb[j] = bit_vector_mask;
         for(int kiss = 0; kiss < num_kiss; ++kiss)
             Bb[j] &= fast_kiss32(&state);
     }
@@ -42,12 +47,10 @@ void generate_random_matrix(int height, int width, int num_kiss, bit_vector_t * 
     int padded_height_32 = SDIV(height, 32);
     int sizeCb = padded_height_32 * width;
     // int sizeC = SDIV(height * width, 32);
-    C0b = (bit_vector_t *) malloc(sizeof(bit_vector_t) * sizeCb);
-    
-    // Set all entries 0
-    for (int i = 0; i < sizeCb; i++)
-        C0b[i] = 0;
 
+    C0b.clear();
+    C0b.resize(sizeCb, 0);
+    
     // Create C
     int nonzeroelements = 0;
 
@@ -64,24 +67,6 @@ void generate_random_matrix(int height, int width, int num_kiss, bit_vector_t * 
             }
         }
     }
-
-
-    // Create C
-    // for(int j=0; j < width; ++j) {
-    //     for(int i=0; i < height; i+=sizeof(bit_vector_t)) {
-    //         bit_vector_t cj = 0;
-    //         for(int b=0; b < sizeof(bit_vector_t); ++b) {
-    //             cj <<= 1;
-    //             if(i+b < height) {
-    //                 if(A[i+b] & B[j]) {
-    //                     cj |= 1;
-    //                     ++nonzeroelements;
-    //                 }
-    //             }
-    //         }
-    //         (*C0b)[] = cj
-    //     }
-    // }
     
     density = (float) nonzeroelements / (height * width);
        
@@ -93,9 +78,11 @@ void generate_random_matrix(int height, int width, int num_kiss, bit_vector_t * 
 }
 
 template<typename bit_vector_t>
-void readInputFileData( bit_vector_t *&C0b,
-                    int &height, int &width, 
-                    float &density, string filename) {
+void readInputFileData(const string filename,
+                       vector<bit_vector_t> &C0b,
+                       int &height, int &width, 
+                       float &density)
+{
     ifstream infile;
     string linestring;
     string field;
@@ -112,11 +99,10 @@ void readInputFileData( bit_vector_t *&C0b,
     // Malloc for C0b
     int padded_height_32 = SDIV(height,32);
     int sizeCb = padded_height_32 * width;
-    C0b = (bit_vector_t *) malloc(sizeof(bit_vector_t) * sizeCb);
-    
-    // Set all entries 0
-    for (int i = 0; i < sizeCb; i++)
-        C0b[i] = 0;
+
+    // C0b = (bit_vector_t *) malloc(sizeof(bit_vector_t) * sizeCb);
+    C0b.clear();
+    C0b.resize(sizeCb,0);
 
     // Read rest of file
     int nonzeroelements = 0;
@@ -151,17 +137,6 @@ bool endsWith(const string& s, const string& suffix) {
 template<typename bit_vector_t, typename element_t = uint8_t>
 void writeToFiles(bit_vector_t* Ab, bit_vector_t* Bb, int height, int width)
 {
-    element_t *A = (element_t*) malloc(sizeof(element_t) * DIM_PARAM * height);
-    element_t *B = (element_t*) malloc(sizeof(element_t) * width * DIM_PARAM);
-
-    for(int i = 0; i < height; i++)
-        for(int j = 0; j < DIM_PARAM; j++)
-            A[i * DIM_PARAM + j] = (Ab[i] >> 32 - j - 1) & 1;
-    
-    for(int i = 0; i < width; i++) 
-        for(int j = 0; j < DIM_PARAM; j++) 
-            B[j * width + i] = (Bb[i] >> 32 - j - 1) & 1;
-    
     time_t rawtime;
     struct tm * timeinfo;
     char buffer[80];
@@ -177,82 +152,78 @@ void writeToFiles(bit_vector_t* Ab, bit_vector_t* Bb, int height, int width)
     
     ofstream myfile(a);
     if (myfile.is_open()){
-        myfile << height << "," << DIM_PARAM << "\n";
+        myfile << height << " " << DIM_PARAM << "\n";
         for (int i = 0; i < height; i++){
-            for (int j = 0; j < DIM_PARAM; j++){
-                myfile << A[i * DIM_PARAM + j] << ((j != DIM_PARAM - 1) ? "," : "");
-            }
-            myfile << "\n";
+            bitset<DIM_PARAM> row(Ab[i] >> (32 - DIM_PARAM));
+            myfile << row << "\n";
         }
         myfile.close();
     }
     
     ofstream myfile2(b);
     if(myfile2.is_open()){
-        myfile2 << DIM_PARAM << "," << width << "\n";
-        for (int i = 0; i<DIM_PARAM; i++){
-            for (int j = 0; j < width; j++){
-                myfile2 << B[i * width + j] << ((j != width - 1) ? "," : "");
-            }
-            myfile2 << "\n";
+        myfile2 << DIM_PARAM << " " << width << "\n";
+        for (int j = 0; j<DIM_PARAM; j++){
+            bitset<DIM_PARAM> col(Bb[j] >> (32 - DIM_PARAM));
+            myfile << col << "\n";
         }
         myfile2.close();
     }   
     cout << "Writing to files \"" << a << "\" and \"" << b << "\" complete" << endl;
 }
 
-
 // Initialization of A and B
 template<typename bit_vector_t>
-void initializeFactors( bit_vector_t *&Ab, bit_vector_t *&Bb, 
+void initializeFactors( vector<bit_vector_t> &Ab, vector<bit_vector_t> &Bb, 
                         int height, int width,
-                        int padded_height, int padded_width, 
-                        float density, fast_kiss_state32_t *state) {
+                        float density, fast_kiss_state32_t *state,
+                        int padded_height = 0, int padded_width = 0)
+{
+    if (padded_height == 0)
+        padded_height = height;
+    if (padded_width == 0)
+        padded_width = width;
 
-    Ab = (bit_vector_t *) malloc(sizeof(bit_vector_t) * padded_height);
-    Bb = (bit_vector_t *) malloc(sizeof(bit_vector_t) * padded_width);
+    Ab.clear();
+    Ab.resize(padded_height, 0);
+    Bb.clear();
+    Bb.resize(padded_width, 0);
 
     // Initialize A and B and copy to device
     bool threshold;
-    for (int i = 0; i < padded_height; i++) {
-        Ab[i] = 0;
-        if (i < height) {
-            #pragma unroll
-            for (int j = 0; j < DIM_PARAM; j++) {
-                switch(INITIALIZATIONMODE) {
-                    case 1: threshold = (fast_kiss32(state) / (double) UINT32_MAX) 
-                                            < (sqrt(1 - pow(1 - density, 1 / (double) DIM_PARAM)));
-                                            break;
-                    case 2: threshold = (fast_kiss32(state) / (double) UINT32_MAX) 
-                                            < (density / (double) 100);
-                                            break;
-                    case 3: threshold = (fast_kiss32(state) / (double) UINT32_MAX) 
-                                            < density;
-                                            break;
-                }
-                Ab[i] |= threshold ? 1 << (32 - j - 1) : 0 ;
+    for (int i = 0; i < height; i++) {
+        #pragma unroll
+        for (int j = 0; j < DIM_PARAM; j++) {
+            switch(INITIALIZATIONMODE) {
+                case 1: threshold = (fast_kiss32(state) / (double) UINT32_MAX) 
+                                        < (sqrt(1 - pow(1 - density, 1 / (double) DIM_PARAM)));
+                                        break;
+                case 2: threshold = (fast_kiss32(state) / (double) UINT32_MAX) 
+                                        < (density / (double) 100);
+                                        break;
+                case 3: threshold = (fast_kiss32(state) / (double) UINT32_MAX) 
+                                        < density;
+                                        break;
             }
+            Ab[i] |= threshold ? 1 << (32 - j - 1) : 0 ;
         }
     }
 
-    for (int i = 0; i < padded_width; i++) {
-        Bb[i] = 0;
-        if (i < width) {
-            #pragma unroll
-            for (int j = 0; j < DIM_PARAM; j++) {
-                switch(INITIALIZATIONMODE) {
-                    case 1: threshold = (fast_kiss32(state) / (double) UINT32_MAX) 
-                                            < (sqrt(1 - pow(1 - density, 1 / (double) DIM_PARAM)));
-                                            break;
-                    case 2: threshold = (fast_kiss32(state) / (double) UINT32_MAX) 
-                                            < (density / (double) 100);
-                                            break;
-                    case 3: threshold = (fast_kiss32(state) / (double) UINT32_MAX) 
-                                            < density;
-                                            break;
-                }
-                Bb[i] |= threshold ? 1 << (32 - j - 1) : 0 ;
+    for (int i = 0; i < width; i++) {
+        #pragma unroll
+        for (int j = 0; j < DIM_PARAM; j++) {
+            switch(INITIALIZATIONMODE) {
+                case 1: threshold = (fast_kiss32(state) / (double) UINT32_MAX) 
+                                        < (sqrt(1 - pow(1 - density, 1 / (double) DIM_PARAM)));
+                                        break;
+                case 2: threshold = (fast_kiss32(state) / (double) UINT32_MAX) 
+                                        < (density / (double) 100);
+                                        break;
+                case 3: threshold = (fast_kiss32(state) / (double) UINT32_MAX) 
+                                        < density;
+                                        break;
             }
+            Bb[i] |= threshold ? 1 << (32 - j - 1) : 0 ;
         }
     }
     

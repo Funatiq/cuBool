@@ -23,7 +23,7 @@
 #include "helper/cuda_helpers.cuh"
 #include "helper/rngpu.hpp"
 #include "helper/io_and_allocation.hpp"
-#include "helper/compute_error.cuh"
+// #include "helper/compute_error.cuh"
 
 #include "CuBin_cpu.cuh"
 #include "CuBin_gpu.cuh"
@@ -36,7 +36,38 @@ using my_bit_vector_t = uint32_t; // only tested uint32_t
 // using uint32_max = std::numeric_limits<uint32_t>::max();
 
 
+template<typename bit_vector_t>
+void computeError(const bit_vector_t *d_Ab, const bit_vector_t *d_Bb, const bit_vector_t *d_Cb, 
+                  const int height, const int width, const int padded_width,
+                  int *&d_distance_C0_C, int &distance_C0_C)
+{
 
+    cudaMalloc(&d_distance_C0_C, sizeof(int));                                                       CUERR
+    cudaMemset(d_distance_C0_C, 0, sizeof(int));                                                       CUERR
+    // cudaMemcpy(d_distance_C0_C, &distance_C0_C, sizeof(int), cudaMemcpyHostToDevice);                     CUERR
+
+    computeFullDistance <<< SDIV(width, THREADSPERBLOCK), THREADSPERBLOCK >>>
+                        (d_Ab, d_Bb, d_Cb, height, width, padded_width, d_distance_C0_C);                    CUERR
+    
+    cudaMemcpy(&distance_C0_C, d_distance_C0_C, sizeof(int), cudaMemcpyDeviceToHost);     CUERR
+}
+
+// Only for debugging
+template<typename bit_vector_t>
+void checkDistance(const bit_vector_t *d_Ab, const bit_vector_t *d_Bb, const bit_vector_t *d_C0b,
+                   const int height, const int width, const int padded_width)
+{
+    int distance_test;
+    int *d_distance_test;
+    // distance_test = 0;
+
+    computeError(d_Ab, d_Bb, d_C0b, height, width, padded_width, d_distance_test, distance_test);
+
+    cudaFree(d_distance_test); CUERR
+
+    printf("Real Error: \t%f\n",
+           distance_test / ((double) height * width));
+}
 
 
 int main(int argc, char **argv) {
@@ -72,71 +103,76 @@ int main(int argc, char **argv) {
         fast_kiss32(&state);
     
     // Read file and save matrix in C0 and d_C0
-    my_bit_vector_t *A0b, *B0b, *C0b;
+    // my_bit_vector_t *A0b, *B0b;
+    my_bit_vector_t *C0b;
     int height, width;
     float density;
     
     // COO coordinates
+    vector<my_bit_vector_t> A0_vec, B0_vec, C0_vec;
     string ending = "data";
     if (endsWith(filename, ending)) {
-        readInputFileData(C0b, height, width, density, filename);
+        readInputFileData(filename, C0_vec, height, width, density);
     } else if (filename.compare("test") == 0) {
         height = 5000;
         width = 5000;
         // height = 5*1024;
         // width = 5*1024;
-        generate_random_matrix(height, width, 3, A0b, B0b, C0b, density);
+        generate_random_matrix(height, width, 3, A0_vec, B0_vec, C0_vec, density);
         // free(A0b);
         // free(B0b);
     } else {
         printf("Wrong data file\n");
         return 0;
     }
+    C0b = C0_vec.data();
 
-    int padded_width = SDIV(width, 32) * 32;
-    int padded_height = SDIV(height, 32) * 32;
-    int padded_height_32 = SDIV(height, 32);
-    // int sizeC = padded_height_32 * width;
-    int sizeC_padded = padded_height_32 * padded_width;
+    // int height_padded = SDIV(height, 32) * 32;
+    int height_padded_32 = SDIV(height, 32);
+    int width_padded = SDIV(width, 32) * 32;
+    // int sizeC = height_padded_32 * width;
+    int sizeC_padded = height_padded_32 * width_padded;
     // cout << "height: " << height << " width: " << width << endl;
-    // cout << "padded height: " << padded_height << " padded width: " << padded_width << endl;
-
-    my_bit_vector_t *d_C0b;
-    cudaMalloc(&d_C0b, sizeof(my_bit_vector_t) * sizeC_padded);                                       CUERR
-    // cudaMemset(d_C0b, 0, sizeof(my_bit_vector_t) * sizeC_padded);                                     CUERR
-    // cudaMemcpy(d_C0b, C0b, sizeof(my_bit_vector_t) * sizeC, cudaMemcpyHostToDevice);               CUERR
-    cudaMemcpy2D(d_C0b, sizeof(my_bit_vector_t) * padded_width,
-                 C0b, sizeof(my_bit_vector_t) * width,
-                 sizeof(my_bit_vector_t) * width,
-                 padded_height_32,
-                 cudaMemcpyHostToDevice);               CUERR
-
-        
-    // Initialize Texture Memory with C0b
-    // initializeTextureMemory(&C0b, height, width);
+    // cout << "padded height: " << height_padded << " padded width: " << width_padded << endl;
 
     // Initialize Ab, Bb, d_Ab, d_Bb, all bitwise used matrices
     my_bit_vector_t *Ab, *Bb;
     // Ab = A0b;
     // Bb = B0b;
-    initializeFactors(Ab, Bb, height, width, height, width, density, &state);
+    // initializeFactors(Ab, Bb, height, width, density, &state);
+
+    vector<my_bit_vector_t> A_vec, B_vec;
+    initializeFactors(A_vec, B_vec, height, width, density, &state);
+
+    Ab = A_vec.data();
+    Bb = B_vec.data();
 
     my_bit_vector_t *d_Ab, *d_Bb;
-    cudaMalloc((void **) &d_Ab, sizeof(my_bit_vector_t) * padded_height);                                              CUERR
-    cudaMalloc((void **) &d_Bb, sizeof(my_bit_vector_t) * padded_width);                                               CUERR
+    cudaMalloc((void **) &d_Ab, sizeof(my_bit_vector_t) * height);                                              CUERR
+    cudaMalloc((void **) &d_Bb, sizeof(my_bit_vector_t) * width);                                               CUERR
     //
-    // cudaMemset(d_Ab, 0, sizeof(my_bit_vector_t) * padded_height);                                     CUERR
-    // cudaMemset(d_Bb, 0, sizeof(my_bit_vector_t) * padded_width);                                     CUERR
+    // cudaMemset(d_Ab, 0, sizeof(my_bit_vector_t) * height_padded);                                     CUERR
+    // cudaMemset(d_Bb, 0, sizeof(my_bit_vector_t) * width_padded);                                     CUERR
     // copy to device arrays
     cudaMemcpy(d_Ab, Ab, sizeof(my_bit_vector_t) * height, cudaMemcpyHostToDevice);                      CUERR
     cudaMemcpy(d_Bb, Bb, sizeof(my_bit_vector_t) * width, cudaMemcpyHostToDevice);                       CUERR
     // A and B now initialized on device and host
 
+    my_bit_vector_t *d_C0b;
+    cudaMalloc(&d_C0b, sizeof(my_bit_vector_t) * sizeC_padded);                                       CUERR
+    // cudaMemset(d_C0b, 0, sizeof(my_bit_vector_t) * sizeC_padded);                                     CUERR
+    // cudaMemcpy(d_C0b, C0b, sizeof(my_bit_vector_t) * sizeC, cudaMemcpyHostToDevice);               CUERR
+    cudaMemcpy2D(d_C0b, sizeof(my_bit_vector_t) * width_padded,
+                 C0b, sizeof(my_bit_vector_t) * width,
+                 sizeof(my_bit_vector_t) * width,
+                 height_padded_32,
+                 cudaMemcpyHostToDevice);               CUERR
+
     // Calculate original error
     int error_C0_C_start;
     int *d_error_C0_C;
     // TIMERSTART(ERRORFIRST)
-    computeError(d_Ab, d_Bb, d_C0b, height, width, padded_width, d_error_C0_C, error_C0_C_start);
+    computeError(d_Ab, d_Bb, d_C0b, height, width, width_padded, d_error_C0_C, error_C0_C_start);
     // TIMERSTOP(ERRORFIRST)
     int error_C0_C = error_C0_C_start;
     // Now the starting error is stored in 3 values
@@ -146,7 +182,7 @@ int main(int argc, char **argv) {
            error_C0_C_start / ((double) height * width));
     printf("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
 
-    checkDistance(d_Ab, d_Bb, d_C0b, height, width, padded_width);
+    checkDistance(d_Ab, d_Bb, d_C0b, height, width, width_padded);
 
     // MAIN PART
     // on GPU
@@ -190,15 +226,15 @@ int main(int argc, char **argv) {
             // #endif
             // For debugging
             // if (error_C0_C < 0)
-                // checkDistance(d_Ab, d_Bb, d_C0b, height, width, padded_width);
+                // checkDistance(d_Ab, d_Bb, d_C0b, height, width, width_padded);
         }
 
         // Change row
-        int lineToBeChanged = fast_kiss32(&state) % height / WARPSPERBLOCK * WARPSPERBLOCK;
+        int lineToBeChanged = (fast_kiss32(&state) % height) / WARPSPERBLOCK * WARPSPERBLOCK;
         uint32_t gpuSeed = ((fast_kiss32(&state) + iterations) % UINT32_MAX);
         vectorMatrixMultCompareRowWarpShared <<< SDIV(min(linesAtOnce, height), WARPSPERBLOCK), WARPSPERBLOCK*32 >>>
                                     (d_Ab, d_Bb, d_C0b,
-                                     height, width, padded_width,
+                                     height, width, width_padded,
                                      lineToBeChanged,
                                      d_error_C0_C, 
                                      gpuSeed, temperature);        CUERR
@@ -209,7 +245,7 @@ int main(int argc, char **argv) {
         gpuSeed = ((fast_kiss32(&state) + iterations) % UINT32_MAX);
         vectorMatrixMultCompareColWarpShared <<< SDIV(min(linesAtOnce, width), WARPSPERBLOCK), WARPSPERBLOCK*32 >>>
                                     (d_Ab, d_Bb, d_C0b,
-                                     height, width, padded_width,
+                                     height, width, width_padded,
                                      lineToBeChanged,
                                      d_error_C0_C, 
                                      gpuSeed,
@@ -248,7 +284,7 @@ int main(int argc, char **argv) {
     
     // Aftertest GPU
     #ifdef TEST
-    aftertestGPU(d_Ab, d_Bb, d_C0b, height, width, padded_width);
+    aftertestGPU(d_Ab, d_Bb, d_C0b, height, width, width_padded);
     #endif
     
     // Write result matrices to files
@@ -290,9 +326,9 @@ int main(int argc, char **argv) {
     // Cleaning up
     // cudaProfilerStop();
     cudaDeviceReset();
-    free(Ab);
-    free(Bb);
-    free(C0b);
+    // free(Ab);
+    // free(Bb);
+    // free(C0b);
     cudaFree(d_Ab);
     cudaFree(d_Bb);
     cudaFree(d_C0b);

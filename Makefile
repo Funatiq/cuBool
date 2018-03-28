@@ -2,29 +2,24 @@ FLAGS = -std=c++11 -arch=sm_61 -Xcompiler="-fopenmp" -O3 -lineinfo
 DEBUG = -g -G
 
 HEADERS = \
-	source/CuBin_final.cuh \
 	source/CuBin_gpu.cuh \
-	source/CuBin_cpu.cuh \
 	source/helper/config.h \
 	source/helper/cuda_helpers.cuh \
 	source/helper/rngpu.hpp \
 	source/helper/matrix_mult.cuh \
 	source/helper/io_and_allocation.hpp
 
-all: CuBin
+all: CuBin CuBin_final
 
-CuBin: source/CuBin_final.cu $(HEADERS)
-	nvcc source/CuBin_final.cu $(FLAGS) -o CuBin $(MAKROS)
+CuBin: source/CuBin_main.cu $(HEADERS)
+	nvcc source/CuBin_main.cu $(FLAGS) -o CuBin $(MAKROS)
 
-perf: MAKROS=-DPERF
-perf: CuBin
+debug: FLAGS += $(DEBUG)
+debug: CuBin
 
-test: MAKROS=-DTEST
-test: CuBin
-
-perf-test: MAKROS=-DPERF -DTEST
-perf-test: CuBin
+CuBin_final: source/CuBin_final.cu $(HEADERS)
+	nvcc source/CuBin_final.cu $(FLAGS) -o CuBin_final $(MAKROS)
 
 clean:
-	rm -f CuBin
+	rm -f CuBin CuBin_final
 
