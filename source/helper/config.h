@@ -5,7 +5,7 @@
 #define THREADSPERBLOCK 128
 #endif
 #ifndef WARPSPERBLOCK
-#define WARPSPERBLOCK 4
+#define WARPSPERBLOCK 16
 #endif
 #ifndef DIM_PARAM
 #define DIM_PARAM 20

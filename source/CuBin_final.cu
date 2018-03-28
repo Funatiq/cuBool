@@ -135,9 +135,9 @@ int main(int argc, char **argv) {
     // Calculate original error
     int error_C0_C_start;
     int *d_error_C0_C;
-    TIMERSTART(ERRORFIRST)
+    // TIMERSTART(ERRORFIRST)
     computeError(d_Ab, d_Bb, d_C0b, height, width, padded_width, d_error_C0_C, error_C0_C_start);
-    TIMERSTOP(ERRORFIRST)
+    // TIMERSTOP(ERRORFIRST)
     int error_C0_C = error_C0_C_start;
     // Now the starting error is stored in 3 values
     // error_C0_C_start, error_C0_C on CPU and d_error_C0_C on GPU
@@ -151,10 +151,8 @@ int main(int argc, char **argv) {
     // MAIN PART
     // on GPU
     int iterations = 0;
-    int lineToBeChanged;
     int iterationsNoImp = 0;
     int error_C0_C_before = error_C0_C;
-    uint32_t gpuSeed;
     threshold *= (height*width);
     #ifdef PERF
     vector<double> errorVector; // vector for error measurement
@@ -196,8 +194,8 @@ int main(int argc, char **argv) {
         }
 
         // Change row
-        lineToBeChanged = fast_kiss32(&state) % height / WARPSPERBLOCK * WARPSPERBLOCK;
-        gpuSeed = ((fast_kiss32(&state) + iterations) % UINT32_MAX);
+        int lineToBeChanged = fast_kiss32(&state) % height / WARPSPERBLOCK * WARPSPERBLOCK;
+        uint32_t gpuSeed = ((fast_kiss32(&state) + iterations) % UINT32_MAX);
         vectorMatrixMultCompareRowWarpShared <<< SDIV(min(linesAtOnce, height), WARPSPERBLOCK), WARPSPERBLOCK*32 >>>
                                     (d_Ab, d_Bb, d_C0b,
                                      height, width, padded_width,
@@ -285,14 +283,6 @@ int main(int argc, char **argv) {
             myfile1 << i << "," << impVector[i] << "\n";        
         }
     }
-    #endif
-
-    #ifdef CPU
-    // CPU COMPUTATION
-    CPUcomputation(Ab, Bb, C0b, height, width, error_C0_C_start, 42, updateStep, threshold, linesAtOnce);
-    
-    // Aftertest CPU
-    aftertestCPU(Ab, Bb, d_Ab, d_Bb, C0b, height, width);
     #endif
 
     printf("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
