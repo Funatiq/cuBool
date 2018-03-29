@@ -30,12 +30,13 @@ int main(int argc, char **argv) {
     config.linesAtOnce = args.get<size_t>({"l","lines"}, config.linesAtOnce);
     config.maxIterations = args.get<size_t>({"i","iterations"}, config.maxIterations);
     config.distanceThreshold = args.get<int>({"e","d","threshold"}, config.distanceThreshold);
-    config.distanceShowEvery = args.get<size_t>({"s","show"}, config.distanceShowEvery);
-    config.tempStart = args.get<float>({"t","temp"}, config.tempStart);
-    config.tempFactor = args.get<float>({"f","factor"}, config.tempFactor);
-    config.tempReduceEvery = args.get<size_t>({"r","reduce"}, config.tempReduceEvery);
+    config.distanceShowEvery = args.get<size_t>({"s","show","showdistance"}, config.distanceShowEvery);
+    config.tempStart = args.get<float>({"t","temp","starttemp"}, config.tempStart);
+    config.tempFactor = args.get<float>({"f","factor","tempfactor"}, config.tempFactor);
+    config.tempReduceEvery = args.get<size_t>({"r","reduce","tempiterations"}, config.tempReduceEvery);
     config.seed = args.get<uint32_t>({"seed"}, config.seed);
-    config.loadBalance = !args.contains({"b","balanceoff"});
+    config.loadBalance = args.contains({"b","balance"});
+    config.flipManyChance =args.get<float>({"c","chance","flipmany"}, config.flipManyChance);
 
      cout << "verbosity " << config.verbosity << "\n"
         << "linesAtOnce " << config.linesAtOnce << "\n"
@@ -46,7 +47,8 @@ int main(int argc, char **argv) {
         << "tempFactor " << config.tempFactor << "\n"
         << "tempReduceEvery " << config.tempReduceEvery << "\n"
         << "seed " << config.seed << "\n"
-        << "loadBalance " << config.loadBalance << endl;
+        << "loadBalance " << config.loadBalance << "\n"
+        << "flipManyChance " << config.flipManyChance << endl;
 
     // // uint32_t seed = (unsigned long)time(NULL) % UINT32_MAX;
     // uint32_t seed = 46;

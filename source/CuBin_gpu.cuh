@@ -9,7 +9,7 @@
 #include "helper/rngpu.hpp"
 #include "helper/cuda_helpers.cuh"
 
-template <int rand_depth = 4>
+template <int rand_depth = 2>
 __inline__ __device__
 uint32_t get_flip_mask_many(fast_kiss_state32_t * state) {
     uint32_t bit_flip_mask = fast_kiss32(state);
@@ -39,10 +39,10 @@ uint32_t get_flip_mask_one(fast_kiss_state32_t * state) {
 }
 
 __inline__ __device__
-uint32_t get_flip_mask(fast_kiss_state32_t * state, float chance = 0.9f) {
+uint32_t get_flip_mask(fast_kiss_state32_t * state, float flipManyChance = 1.0f) {
     float randomNumber = fast_kiss32(state) / (float) UINT32_MAX;
 
-    return randomNumber < chance ? get_flip_mask_one(state) : get_flip_mask_many(state);
+    return randomNumber < flipManyChance ? get_flip_mask_many(state) : get_flip_mask_one(state);
 }
 
 
@@ -102,7 +102,8 @@ vectorMatrixMultCompareRowWarpShared(bit_vector_t *A,
                                      const int startrow,
                                      int *global_error,
                                      const uint32_t seed, 
-                                     const float temperature)
+                                     const float temperature,
+                                     const float flipManyChance = 1.0f)
 {
     __shared__ bit_vector_t B_block[ 32 * WARPSPERBLOCK ];
     __shared__ bit_vector_t C_block[ 32 * WARPSPERBLOCK ];
@@ -122,7 +123,7 @@ vectorMatrixMultCompareRowWarpShared(bit_vector_t *A,
     if (warpLane == 0 && rowToBeChanged < height) {
         state = get_initial_fast_kiss_state32(seed + warpId);
 
-        currentRow_changed = currentRow ^ get_flip_mask(&state);
+        currentRow_changed = currentRow ^ get_flip_mask(&state, flipManyChance);
     }
     currentRow_changed = __shfl_sync(FULLMASK, currentRow_changed, 0);
     
@@ -182,7 +183,8 @@ vectorMatrixMultCompareColWarpShared(const bit_vector_t * __restrict__ A,
                                      const int startcol,
                                      int *global_error,
                                      const uint32_t seed,
-                                     const float temperature)
+                                     const float temperature,
+                                     const float flipManyChance = 1.0f)
 {
     __shared__ bit_vector_t A_block[32*WARPSPERBLOCK];
     // __shared__ bit_vector_t B_block[32];
@@ -206,7 +208,7 @@ vectorMatrixMultCompareColWarpShared(const bit_vector_t * __restrict__ A,
     if (warpLane == 0 && colToBeChanged < width) {
         state = get_initial_fast_kiss_state32(seed + warpId);
 
-        currentCol_changed = currentCol ^ get_flip_mask(&state);
+        currentCol_changed = currentCol ^ get_flip_mask(&state, flipManyChance);
     }
     currentCol_changed = __shfl_sync(FULLMASK, currentCol_changed, 0);
     
@@ -378,7 +380,8 @@ public:
         float tempFactor = 0.98f;
         size_t tempReduceEvery = std::numeric_limits<size_t>::max();
         uint32_t seed = 0;
-        bool loadBalance = true;
+        bool loadBalance = false;
+        float flipManyChance = 0.1f;
     };
 
     void run(const CuBin_config& config) {
@@ -421,7 +424,7 @@ public:
             vectorMatrixMultCompareRowWarpShared 
                 <<< SDIV(min(linesAtOnce, height), WARPSPERBLOCK), WARPSPERBLOCK*32 >>>
                 (d_A, d_B, d_C, height, width, width_C_padded,
-                 lineToBeChanged, d_distance, gpuSeed, temperature);
+                 lineToBeChanged, d_distance, gpuSeed, temperature, config.flipManyChance);
 
             cudaDeviceSynchronize(); CUERR
 
@@ -432,7 +435,7 @@ public:
             vectorMatrixMultCompareColWarpShared 
                 <<< SDIV(min(linesAtOnce, width), WARPSPERBLOCK), WARPSPERBLOCK*32 >>>
                 (d_A, d_B, d_C, height, width, width_C_padded,
-                 lineToBeChanged, d_distance, gpuSeed, temperature);
+                 lineToBeChanged, d_distance, gpuSeed, temperature, config.flipManyChance);
 
             cudaDeviceSynchronize(); CUERR
 
