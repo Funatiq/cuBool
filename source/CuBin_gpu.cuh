@@ -396,8 +396,10 @@ public:
         }
 
         size_t linesAtOnce = config.linesAtOnce;
-        if(config.loadBalance)
+        if(config.loadBalance) {
             linesAtOnce = linesAtOnce / max_parallel_lines * max_parallel_lines;
+            if (!linesAtOnce) linesAtOnce = max_parallel_lines;
+        }
 
         if(config.verbosity > 0) {
             std::cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n";
