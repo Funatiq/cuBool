@@ -78,6 +78,63 @@ void generate_random_matrix(int height, int width, int num_kiss,
 }
 
 template<typename bit_vector_t>
+void generate_random_matrix(int height, int width, int num_kiss, 
+                            vector<float> &Ab, vector<float> &Bb, vector<bit_vector_t> &C0b,
+                            float &density)
+{
+    Ab.clear();
+    Ab.resize(height * DIM_PARAM, 0);
+    Bb.clear();
+    Bb.resize(width * DIM_PARAM, 0);
+
+    uint32_t seed = 42;
+    fast_kiss_state32_t state = get_initial_fast_kiss_state32(seed);
+
+    for(int i=0; i < height * DIM_PARAM; ++i) {
+        Ab[i] = (float) fast_kiss32(&state) / UINT32_MAX;
+    }
+    for(int j=0; j < width * DIM_PARAM; ++j) {
+        Bb[j] = (float) fast_kiss32(&state) / UINT32_MAX;
+    }
+
+    // Malloc for C0b
+    int padded_height_32 = SDIV(height, 32);
+    int sizeCb = padded_height_32 * width;
+    // int sizeC = SDIV(height * width, 32);
+
+    C0b.clear();
+    C0b.resize(sizeCb, 0);
+    
+    // Create C
+    int nonzeroelements = 0;
+
+    for(int j=0; j < width; ++j) {
+        for(int i=0; i < height; ++i) {
+            for (int k=0; k < DIM_PARAM; ++k) {
+                if((Ab[i * DIM_PARAM + k] > 0.5f) & (Bb[j * DIM_PARAM + k] > 0.5f)) {
+                    // int index = j*height+i;
+                    int intId = i / 32 * width + j;
+                    int intLane = i % 32;
+
+                    C0b[intId] |= 1 << (32 - 1 - intLane);
+
+                    ++nonzeroelements;
+                    break;
+                }
+            }
+        }
+    }
+    
+    density = (float) nonzeroelements / (height * width);
+       
+    printf("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
+    printf("MATRIX CREATION COMPLETE\n");
+    printf("Height: %i\nWidth: %i\nNon-zero elements: %i\nDensity: %f\n",
+           height, width, nonzeroelements, density);
+    printf("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
+}
+
+template<typename bit_vector_t>
 void readInputFileData(const string filename,
                        vector<bit_vector_t> &C0b,
                        int &height, int &width, 

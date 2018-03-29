@@ -4,6 +4,7 @@
 #include <vector>
 #include <iostream>
 #include <limits>
+#include <type_traits>
 
 #include "helper/config.h"
 #include "helper/rngpu.hpp"
@@ -60,34 +61,80 @@ bool metro(fast_kiss_state32_t * state, const int error, const float temperature
 }
 
 __global__
-void computeFullDistance(const uint32_t *Ab, const uint32_t *Bb, const uint32_t *Cb, 
-                      const int height, const int width,const int padded_width,
-                      int *distance_test) {
-    int j = threadIdx.x + blockIdx.x * blockDim.x;
-    //__shared__ volatile int shared_distance[THREADSPERBLOCK];
-    //shared_distance[threadIdx.x] = 0;
+void computeFullDistance(const uint32_t * __restrict__ Ab,
+                         const uint32_t * __restrict__ Bb,
+                         const uint32_t * __restrict__ Cb, 
+                         const int height, const int width,
+                         const int padded_width,
+                         int *distance_test)
+{
+    const int warpId = (threadIdx.x + blockIdx.x * blockDim.x) / warpSize;
+    const int warpLane = threadIdx.x % warpSize;
+
     __shared__ int reductionArray[32];
     
+    const int i = warpId;
     int error_thread = 0;
-    if (j < width) {
-        for (int i = 0; i < height; i++) {
-            int lineSum = (Ab[i] & Bb[j]) ? 1 : 0;
-            int intId = i / 32 * padded_width + j;
-            int intLane = i % 32;
-            // int intId = (j * height + i) / 32;
-            // int intLane = (j * height + i) % 32;
-            int truthEntry = (Cb[intId] >> (32 - intLane - 1)) & 1; 
+    if (i < height) {
+        for (int j = warpLane; j < width; j += warpSize) {
+            const int lineSum = (Ab[i] & Bb[j]) ? 1 : 0;
+            const int intId = i / 32 * padded_width + j;
+            const int intLane = i % 32;
+
+            const int truthEntry = (Cb[intId] >> (32 - intLane - 1)) & 1; 
             error_thread += lineSum ^ truthEntry;
         }
     }
-    __syncthreads();
     
-    int error_block = blockReduceSum(error_thread, reductionArray);
+    const int error_block = blockReduceSum(error_thread, reductionArray);
     // Thread with threadIdx.x==0 now has total error of block
 
-   if (threadIdx.x == 0) {
+    if (threadIdx.x == 0)
         atomicAdd(distance_test, error_block);
-   }
+}
+
+__global__
+void computeFullDistance(const float * __restrict__ Ab,
+                         const float * __restrict__ Bb,
+                         const uint32_t * __restrict__ Cb, 
+                         const int height, const int width,
+                         const int padded_width,
+                         int *distance_test)
+{
+    const int warpId = (threadIdx.x + blockIdx.x * blockDim.x) / warpSize;
+    const int warpIdIntern = threadIdx.x / warpSize;
+    const int warpLane = threadIdx.x % warpSize;
+
+    __shared__ int reductionArray[THREADSPERBLOCK/32];
+    
+    const int i = warpId;
+    const int k = warpLane;
+    int error_warp = 0;
+    if (i < height) {
+        for (int j = 0; j < width; ++j) {
+            int lineSum = __any_sync(FULLMASK, Ab[i*warpSize + k] > 0.5f) & (Bb[j*warpSize + k] > 0.5f) ? 1 : 0;
+            if(warpLane == 0) {
+                const int intId = i / 32 * padded_width + j;
+                const int intLane = i % 32;
+
+                const int truthEntry = (Cb[intId] >> (32 - intLane - 1)) & 1; 
+                error_warp += lineSum ^ truthEntry;
+            }
+        }
+    }
+    if(warpLane == 0)
+        reductionArray[warpIdIntern] = error_warp;
+    __syncthreads();
+
+    int error_block;
+    if(warpIdIntern == 0) {
+        error_block = warpReduceSum(reductionArray[warpLane], FULLMASK >> (32 - THREADSPERBLOCK/32 - 1));
+        
+        // Thread with threadIdx.x==0 now has total error of block
+
+       if (threadIdx.x == 0)
+            atomicAdd(distance_test, error_block);
+    }
 }
 
 
@@ -275,15 +322,48 @@ vectorMatrixMultCompareColWarpShared(const bit_vector_t * __restrict__ A,
     // }
 }
 
+// [A] row Change kernel
+template<typename bit_vector_t>
+__global__ void
+vectorMatrixMultCompareRowWarpShared(float *A,
+                                     const float * __restrict__ B,
+                                     const bit_vector_t * __restrict__ C,
+                                     const int height,
+                                     const int width,
+                                     const int padded_width,
+                                     const int startrow,
+                                     int *global_error,
+                                     const uint32_t seed, 
+                                     const float temperature,
+                                     const float flipManyChance,
+                                     const uint32_t flipDepth);
+
+// [B] col change kernel
+template<typename bit_vector_t>
+__global__ void
+vectorMatrixMultCompareColWarpShared(const float * __restrict__ A,
+                                     float *B,
+                                     const bit_vector_t * __restrict__ C,
+                                     const int height,
+                                     const int width,
+                                     const int padded_width,
+                                     const int startcol,
+                                     int *global_error,
+                                     const uint32_t seed,
+                                     const float temperature,
+                                     const float flipManyChance,
+                                     const uint32_t flipManyDepth);
 
 
+template<typename factor_t = uint32_t>
 class CuBin
 {
+    using factor_matrix_t = std::vector<factor_t>;
     using bit_vector_t = uint32_t;
-    using bit_matrix = std::vector<bit_vector_t>;
+    using bit_matrix_t = std::vector<bit_vector_t>;
 
 public:
-    CuBin(const bit_matrix& A, const bit_matrix& B, const bit_matrix& C) {
+    CuBin(const factor_matrix_t& A, const factor_matrix_t& B, const bit_matrix_t& C) {
         int device_id = 0;
         cudaDeviceProp prop;
         cudaGetDeviceProperties(&prop, device_id);
@@ -297,8 +377,17 @@ public:
         clear();
     }
 
-    bool initialize(const bit_matrix& A, const bit_matrix& B, const bit_matrix& C) {
-        if( SDIV(A.size(),32) * B.size() != C.size()) {
+    bool initialize(const factor_matrix_t& A, const factor_matrix_t& B, const bit_matrix_t& C) {
+        if(std::is_same<factor_t, uint32_t>::value) {
+            lineSize = 1;
+            lineSizePadded = 1;
+        }
+        if(std::is_same<factor_t, float>::value) {
+            lineSize = DIM_PARAM;
+            lineSizePadded = 32;
+        }
+
+        if( SDIV(A.size()/lineSize,32) * B.size()/lineSize != C.size()) {
             std::cerr << "CuBin construction: Matrix dimension mismatch." << std::endl;
             return false;
         }
@@ -308,20 +397,31 @@ public:
             return false;
         }
 
-        height = A.size();
-        // size_t height_padded = SDIV(height, WARPSPERBLOCK) * WARPSPERBLOCK;
-        cudaMalloc(&d_A, sizeof(bit_vector_t) * height); CUERR
+        size_t lineBytes = sizeof(factor_t) * lineSize;
+        size_t lineBytes_padded = sizeof(factor_t) * lineSizePadded;
 
-        width = B.size();
+        height = A.size() / lineSize;
+        // size_t height_padded = SDIV(height, WARPSPERBLOCK) * WARPSPERBLOCK;
+        cudaMalloc(&d_A, lineBytes_padded * height); CUERR
+
+        width = B.size() / lineSize;
         // size_t width_padded = SDIV(width, WARPSPERBLOCK) * WARPSPERBLOCK;
-        cudaMalloc(&d_B, sizeof(bit_vector_t) * width); CUERR
+        cudaMalloc(&d_B, lineBytes_padded * width); CUERR
         
         size_t height_C = SDIV(height, 32);
         width_C_padded = SDIV(width, 32) * 32;
         cudaMalloc(&d_C, sizeof(bit_vector_t) * height_C * width_C_padded); CUERR
 
-        cudaMemcpy(d_A, A.data(), sizeof(bit_vector_t) * height, cudaMemcpyHostToDevice); CUERR
-        cudaMemcpy(d_B, B.data(), sizeof(bit_vector_t) * width, cudaMemcpyHostToDevice); CUERR
+        cudaMemcpy2D(d_A, lineBytes_padded,
+                     A.data(), lineBytes,
+                     lineBytes,
+                     height,
+                     cudaMemcpyHostToDevice); CUERR
+        cudaMemcpy2D(d_B, lineBytes_padded,
+                     B.data(), lineBytes,
+                     lineBytes,
+                     width,
+                     cudaMemcpyHostToDevice); CUERR
         cudaMemcpy2D(d_C, sizeof(bit_vector_t) * width_C_padded,
                      C.data(), sizeof(bit_vector_t) * width,
                      sizeof(bit_vector_t) * width,
@@ -333,7 +433,7 @@ public:
         cudaMalloc(&d_distance, sizeof(int)); CUERR
         cudaMemset(d_distance, 0, sizeof(int)); CUERR
 
-        computeFullDistance <<< SDIV(width, THREADSPERBLOCK), THREADSPERBLOCK >>>
+        computeFullDistance <<< SDIV(width, THREADSPERBLOCK/32), THREADSPERBLOCK >>>
                         (d_A, d_B, d_C, height, width, width_C_padded, d_distance); CUERR
 
         cudaMemcpy(distance, d_distance, sizeof(int), cudaMemcpyDeviceToHost);
@@ -352,16 +452,16 @@ public:
         }
     }
 
-    void getFactors(bit_matrix& A, bit_matrix& B) {
+    void getFactors(factor_matrix_t& A, factor_matrix_t& B) {
         if(!initialized) {
             std::cerr << "CuBin not initialized." << endl;
             return;
         }
         A.resize(height);
-        cudaMemcpy(A.data(), d_A, sizeof(bit_vector_t) * height, cudaMemcpyDeviceToHost); CUERR
+        cudaMemcpy(A.data(), d_A, sizeof(factor_t) * height, cudaMemcpyDeviceToHost); CUERR
         
         B.resize(width);
-        cudaMemcpy(B.data(), d_B, sizeof(bit_vector_t) * width, cudaMemcpyDeviceToHost); CUERR
+        cudaMemcpy(B.data(), d_B, sizeof(factor_t) * width, cudaMemcpyDeviceToHost); CUERR
     }
 
     int getDistance() {
@@ -488,7 +588,7 @@ public:
         cudaMalloc(&d_distance_proof, sizeof(int)); CUERR
         cudaMemset(d_distance_proof, 0, sizeof(int)); CUERR
 
-        computeFullDistance <<< SDIV(width, THREADSPERBLOCK), THREADSPERBLOCK >>>
+        computeFullDistance <<< SDIV(width, THREADSPERBLOCK/32), THREADSPERBLOCK >>>
                         (d_A, d_B, d_C, height, width, width_C_padded, d_distance_proof); CUERR
 
         cudaMemcpy(distance_proof, d_distance_proof, sizeof(int), cudaMemcpyDeviceToHost);
@@ -503,15 +603,15 @@ public:
         cudaFreeHost(distance_proof);
         cudaFree(d_distance_proof);
         return equal;
-    }
+    }   
 
 private:
     bool initialized = false;
-    bit_matrix A;
-    bit_matrix B;
-    bit_matrix C;
-    bit_vector_t *d_A;
-    bit_vector_t *d_B;
+    factor_matrix_t A;
+    factor_matrix_t B;
+    bit_matrix_t C;
+    factor_t *d_A;
+    factor_t *d_B;
     bit_vector_t *d_C;
     int *distance;
     int *d_distance;
@@ -519,6 +619,8 @@ private:
     size_t height = 0;
     size_t width = 0;
     size_t width_C_padded = 0;
+    size_t lineSize = 1;
+    size_t lineSizePadded = 1;
     int max_parallel_lines;
 };
 

@@ -59,6 +59,11 @@
 #define SDIV(x,y)(((x)+(y)-1)/(y))
 #endif
 
+// floor to next multiple of y
+#ifndef FLOOR
+#define FLOOR(x,y)(((x)/(y)*(y))
+#endif
+
 
 #define FULLMASK 0xffffffff
 

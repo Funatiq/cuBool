@@ -12,7 +12,7 @@ HEADERS = \
 all: CuBin
 
 CuBin: source/CuBin_main.cu $(HEADERS)
-	nvcc source/CuBin_main.cu $(FLAGS) -o CuBin $(MAKROS)
+	nvcc source/CuBin_main.cu $(FLAGS) -o CuBin
 
 debug: FLAGS += $(DEBUG)
 debug: CuBin
@@ -20,3 +20,5 @@ debug: CuBin
 clean:
 	rm -f CuBin
 
+test_distance: tests/test_cubin_distance.cu $(HEADERS)
+	nvcc tests/test_cubin_distance.cu $(FLAGS) -o test_distance

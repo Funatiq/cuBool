@@ -25,7 +25,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    CuBin::CuBin_config config;
+    CuBin<my_bit_vector_t>::CuBin_config config;
     config.verbosity = args.get<size_t>({"v","verbosity"}, config.verbosity);
     config.linesAtOnce = args.get<size_t>({"l","lines","linesperkernel"}, config.linesAtOnce);
     config.maxIterations = args.get<size_t>({"i","iter","iterations"}, config.maxIterations);
@@ -88,7 +88,7 @@ int main(int argc, char **argv) {
     initializeFactors(A_vec, B_vec, height, width, density, &state);
 
     // copy matrices to GPU and run optimization
-    auto cubin = CuBin(A_vec, B_vec, C0_vec);
+    auto cubin = CuBin<my_bit_vector_t>(A_vec, B_vec, C0_vec);
     int distance = cubin.getDistance();
     cout << "Start distance: " << (float) distance / (height*width)
          << " = " << distance << " elements" << endl;
