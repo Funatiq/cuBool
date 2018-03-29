@@ -27,28 +27,32 @@ int main(int argc, char **argv) {
 
     CuBin::CuBin_config config;
     config.verbosity = args.get<size_t>({"v","verbosity"}, config.verbosity);
-    config.linesAtOnce = args.get<size_t>({"l","lines"}, config.linesAtOnce);
-    config.maxIterations = args.get<size_t>({"i","iterations"}, config.maxIterations);
+    config.linesAtOnce = args.get<size_t>({"l","lines","linesperkernel"}, config.linesAtOnce);
+    config.maxIterations = args.get<size_t>({"i","iter","iterations"}, config.maxIterations);
     config.distanceThreshold = args.get<int>({"e","d","threshold"}, config.distanceThreshold);
     config.distanceShowEvery = args.get<size_t>({"s","show","showdistance"}, config.distanceShowEvery);
-    config.tempStart = args.get<float>({"t","temp","starttemp"}, config.tempStart);
-    config.tempFactor = args.get<float>({"f","factor","tempfactor"}, config.tempFactor);
-    config.tempReduceEvery = args.get<size_t>({"r","reduce","tempiterations"}, config.tempReduceEvery);
+    config.tempStart = args.get<float>({"ts","tempstart","starttemp"}, config.tempStart);
+    config.tempEnd = args.get<float>({"te","tempend","endtemp"}, config.tempEnd);
+    config.tempFactor = args.get<float>({"tf","factor","tempfactor"}, config.tempFactor);
+    config.tempReduceEvery = args.get<size_t>({"tr","reduce","tempiterations"}, config.tempReduceEvery);
     config.seed = args.get<uint32_t>({"seed"}, config.seed);
-    config.loadBalance = args.contains({"b","balance"});
-    config.flipManyChance =args.get<float>({"c","chance","flipmany"}, config.flipManyChance);
+    config.loadBalance = args.contains({"b","balance","loadbalance"});
+    config.flipManyChance = args.get<float>({"fc","chance","flipchance","flipmanychance"}, config.flipManyChance);
+    config.flipManyDepth = args.get<uint32_t>({"fd","depth","flipdepth","flipmanydepth"}, config.flipManyDepth);
 
      cout << "verbosity " << config.verbosity << "\n"
-        << "linesAtOnce " << config.linesAtOnce << "\n"
         << "maxIterations " << config.maxIterations << "\n"
+        << "linesAtOnce " << config.linesAtOnce << "\n"
         << "distanceThreshold " << config.distanceThreshold << "\n"
         << "distanceShowEvery " << config.distanceShowEvery << "\n"
         << "tempStart " << config.tempStart << "\n"
+        << "tempEnd " << config.tempEnd << "\n"
         << "tempFactor " << config.tempFactor << "\n"
         << "tempReduceEvery " << config.tempReduceEvery << "\n"
         << "seed " << config.seed << "\n"
         << "loadBalance " << config.loadBalance << "\n"
-        << "flipManyChance " << config.flipManyChance << endl;
+        << "flipManyChance " << config.flipManyChance << "\n"
+        << "flipManyDepth " << config.flipManyDepth << endl;
 
     // // uint32_t seed = (unsigned long)time(NULL) % UINT32_MAX;
     // uint32_t seed = 46;
@@ -79,10 +83,11 @@ int main(int argc, char **argv) {
         return 0;
     }
 
-    // Initialize Ab, Bb, d_Ab, d_Bb, all bitwise used matrices
+    // Initialize Ab, Bb bitvector matrices
     vector<my_bit_vector_t> A_vec, B_vec;
     initializeFactors(A_vec, B_vec, height, width, density, &state);
 
+    // copy matrices to GPU and run optimization
     auto cubin = CuBin(A_vec, B_vec, C0_vec);
     int distance = cubin.getDistance();
     cout << "Start distance: " << (float) distance / (height*width)

@@ -9,12 +9,11 @@
 #include "helper/rngpu.hpp"
 #include "helper/cuda_helpers.cuh"
 
-template <int rand_depth = 2>
 __inline__ __device__
-uint32_t get_flip_mask_many(fast_kiss_state32_t * state) {
-    uint32_t bit_flip_mask = fast_kiss32(state);
+uint32_t get_flip_mask_many(fast_kiss_state32_t * state, const uint32_t rand_depth) {
+    uint32_t bit_flip_mask = FULLMASK;
     #pragma unroll
-    for(int i = 1; i < rand_depth; ++i) {
+    for(int i = 0; i < rand_depth; ++i) {
         bit_flip_mask &= fast_kiss32(state);
     }
     bit_flip_mask &= FULLMASK << (32-DIM_PARAM);
@@ -39,15 +38,17 @@ uint32_t get_flip_mask_one(fast_kiss_state32_t * state) {
 }
 
 __inline__ __device__
-uint32_t get_flip_mask(fast_kiss_state32_t * state, float flipManyChance = 1.0f) {
+uint32_t get_flip_mask(fast_kiss_state32_t * state,
+                       const float flipManyChance = 1.0f,
+                       const uint32_t flipManyDepth = 2) {
     float randomNumber = fast_kiss32(state) / (float) UINT32_MAX;
 
-    return randomNumber < flipManyChance ? get_flip_mask_many(state) : get_flip_mask_one(state);
+    return randomNumber < flipManyChance ? get_flip_mask_many(state, flipManyDepth) : get_flip_mask_one(state);
 }
 
 
 __inline__ __device__
-bool metro(fast_kiss_state32_t * state, int error, float temperature) {
+bool metro(fast_kiss_state32_t * state, const int error, const float temperature) {
     if(error < 0)
         return true;
     if(temperature <= 0)
@@ -103,7 +104,8 @@ vectorMatrixMultCompareRowWarpShared(bit_vector_t *A,
                                      int *global_error,
                                      const uint32_t seed, 
                                      const float temperature,
-                                     const float flipManyChance = 1.0f)
+                                     const float flipManyChance,
+                                     const uint32_t flipDepth)
 {
     __shared__ bit_vector_t B_block[ 32 * WARPSPERBLOCK ];
     __shared__ bit_vector_t C_block[ 32 * WARPSPERBLOCK ];
@@ -123,7 +125,7 @@ vectorMatrixMultCompareRowWarpShared(bit_vector_t *A,
     if (warpLane == 0 && rowToBeChanged < height) {
         state = get_initial_fast_kiss_state32(seed + warpId);
 
-        currentRow_changed = currentRow ^ get_flip_mask(&state, flipManyChance);
+        currentRow_changed = currentRow ^ get_flip_mask(&state, flipManyChance, flipDepth);
     }
     currentRow_changed = __shfl_sync(FULLMASK, currentRow_changed, 0);
     
@@ -184,7 +186,8 @@ vectorMatrixMultCompareColWarpShared(const bit_vector_t * __restrict__ A,
                                      int *global_error,
                                      const uint32_t seed,
                                      const float temperature,
-                                     const float flipManyChance = 1.0f)
+                                     const float flipManyChance,
+                                     const uint32_t flipManyDepth)
 {
     __shared__ bit_vector_t A_block[32*WARPSPERBLOCK];
     // __shared__ bit_vector_t B_block[32];
@@ -208,7 +211,7 @@ vectorMatrixMultCompareColWarpShared(const bit_vector_t * __restrict__ A,
     if (warpLane == 0 && colToBeChanged < width) {
         state = get_initial_fast_kiss_state32(seed + warpId);
 
-        currentCol_changed = currentCol ^ get_flip_mask(&state, flipManyChance);
+        currentCol_changed = currentCol ^ get_flip_mask(&state, flipManyChance, flipManyDepth);
     }
     currentCol_changed = __shfl_sync(FULLMASK, currentCol_changed, 0);
     
@@ -371,17 +374,19 @@ public:
     }
 
     struct CuBin_config {
-        size_t verbosity = 1;
+        size_t verbosity = 2;
         size_t linesAtOnce = 0;
         size_t maxIterations = 0;
         int distanceThreshold = 0;
         size_t distanceShowEvery = std::numeric_limits<size_t>::max();
         float tempStart = 0.0f;
+        float tempEnd = -1.0f;
         float tempFactor = 0.98f;
         size_t tempReduceEvery = std::numeric_limits<size_t>::max();
         uint32_t seed = 0;
         bool loadBalance = false;
         float flipManyChance = 0.1f;
+        uint32_t flipManyDepth = 2;
     };
 
     void run(const CuBin_config& config) {
@@ -415,7 +420,9 @@ public:
         fast_kiss_state32_t state = get_initial_fast_kiss_state32(config.seed);
         float temperature = config.tempStart;
         size_t iteration = 0;
-        while( *distance > config.distanceThreshold && iteration++ < config.maxIterations) {
+        while( *distance > config.distanceThreshold
+                && iteration++ < config.maxIterations
+                && temperature > config.tempEnd) {
 
             // Change rows
             int lineToBeChanged = (fast_kiss32(&state) % height) / WARPSPERBLOCK * WARPSPERBLOCK;
@@ -424,7 +431,7 @@ public:
             vectorMatrixMultCompareRowWarpShared 
                 <<< SDIV(min(linesAtOnce, height), WARPSPERBLOCK), WARPSPERBLOCK*32 >>>
                 (d_A, d_B, d_C, height, width, width_C_padded,
-                 lineToBeChanged, d_distance, gpuSeed, temperature, config.flipManyChance);
+                 lineToBeChanged, d_distance, gpuSeed, temperature, config.flipManyChance, config.flipManyDepth);
 
             cudaDeviceSynchronize(); CUERR
 
@@ -435,7 +442,7 @@ public:
             vectorMatrixMultCompareColWarpShared 
                 <<< SDIV(min(linesAtOnce, width), WARPSPERBLOCK), WARPSPERBLOCK*32 >>>
                 (d_A, d_B, d_C, height, width, width_C_padded,
-                 lineToBeChanged, d_distance, gpuSeed, temperature, config.flipManyChance);
+                 lineToBeChanged, d_distance, gpuSeed, temperature, config.flipManyChance, config.flipManyDepth);
 
             cudaDeviceSynchronize(); CUERR
 
@@ -458,7 +465,8 @@ public:
                 std::cout << "Reached iteration limit: " << config.maxIterations << std::endl;
             if (!(*distance > config.distanceThreshold))
                 std::cout << "Distance below threshold." << std::endl;
-
+            if (!(temperature > config.tempEnd))
+                std::cout << "Temperature below threshold." << std::endl;
         }
         std::cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n";
         std::cout << "Final distance: " << (float) *distance / (height * width)
