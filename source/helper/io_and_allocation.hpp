@@ -9,8 +9,8 @@
 #include "config.h"
 #include "rngpu.hpp"
 
-#ifndef SDIV
 // safe division
+#ifndef SDIV
 #define SDIV(x,y)(((x)+(y)-1)/(y))
 // #define SDIV(x,y)(((x)-1)/(y)+1)
 #endif

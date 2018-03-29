@@ -6,8 +6,10 @@ HEADERS = \
 	source/helper/config.h \
 	source/helper/cuda_helpers.cuh \
 	source/helper/rngpu.hpp \
-	source/helper/matrix_mult.cuh \
-	source/helper/io_and_allocation.hpp
+	source/helper/io_and_allocation.hpp \
+	source/helper/args_parser.h
+
+MORE_HEADERS = source/helper/matrix_mult.cuh
 
 all: CuBin CuBin_final
 
@@ -17,7 +19,7 @@ CuBin: source/CuBin_main.cu $(HEADERS)
 debug: FLAGS += $(DEBUG)
 debug: CuBin
 
-CuBin_final: source/CuBin_final.cu $(HEADERS)
+CuBin_final: source/CuBin_final.cu $(HEADERS) $(MORE_HEADERS)
 	nvcc source/CuBin_final.cu $(FLAGS) -o CuBin_final $(MAKROS)
 
 clean:

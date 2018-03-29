@@ -9,15 +9,15 @@
 #include "helper/rngpu.hpp"
 #include "helper/cuda_helpers.cuh"
 
-template <int rand_depth = 3>
+template <int rand_depth = 4>
 __inline__ __device__
-uint32_t get_flip_mask(fast_kiss_state32_t * state) {
+uint32_t get_flip_mask_many(fast_kiss_state32_t * state) {
     uint32_t bit_flip_mask = fast_kiss32(state);
     #pragma unroll
     for(int i = 1; i < rand_depth; ++i) {
         bit_flip_mask &= fast_kiss32(state);
     }
-    bit_flip_mask <<= (32-DIM_PARAM);
+    bit_flip_mask &= FULLMASK << (32-DIM_PARAM);
     return bit_flip_mask;
 }
 
@@ -31,6 +31,20 @@ uint32_t get_flip_mask_11(fast_kiss_state32_t * state) {
     }
     return bit_flip_mask;
 }
+
+__inline__ __device__
+uint32_t get_flip_mask_one(fast_kiss_state32_t * state) {
+    uint32_t lane = fast_kiss32(state) % DIM_PARAM;
+    return 1 << (32 - 1 - lane);
+}
+
+__inline__ __device__
+uint32_t get_flip_mask(fast_kiss_state32_t * state, float chance = 0.9f) {
+    float randomNumber = fast_kiss32(state) / (float) UINT32_MAX;
+
+    return randomNumber < chance ? get_flip_mask_one(state) : get_flip_mask_many(state);
+}
+
 
 __inline__ __device__
 bool metro(fast_kiss_state32_t * state, int error, float temperature) {
@@ -265,6 +279,12 @@ class CuBin
 
 public:
     CuBin(const bit_matrix& A, const bit_matrix& B, const bit_matrix& C) {
+        int device_id = 0;
+        cudaDeviceProp prop;
+        cudaGetDeviceProperties(&prop, device_id);
+
+        max_parallel_lines = prop.multiProcessorCount * WARPSPERBLOCK;
+
         initialize(A, B, C);
     }
 
@@ -349,7 +369,7 @@ public:
     }
 
     struct CuBin_config {
-        size_t verbosity = 0;
+        size_t verbosity = 1;
         size_t linesAtOnce = 0;
         size_t maxIterations = 0;
         int distanceThreshold = 0;
@@ -358,6 +378,7 @@ public:
         float tempFactor = 0.98f;
         size_t tempReduceEvery = std::numeric_limits<size_t>::max();
         uint32_t seed = 0;
+        bool loadBalance = true;
     };
 
     void run(const CuBin_config& config) {
@@ -366,14 +387,26 @@ public:
             return;
         }
 
+        size_t linesAtOnce = config.linesAtOnce;
+        if(config.loadBalance)
+            linesAtOnce = linesAtOnce / max_parallel_lines * max_parallel_lines;
+
         if(config.verbosity > 0) {
             std::cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n";
             std::cout << "- - - - Starting " << config.maxIterations
-                      << " GPU iterations, changing " << config.linesAtOnce
+                      << " GPU iterations, changing " << linesAtOnce
                       << " lines each time\n";
             std::cout << "- - - - Showing error every " << config.distanceShowEvery
                       << " steps\n";
-            std::cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n";
+            if(config.tempStart > 0) {
+                std::cout << "- - - - Start temperature " << config.tempStart
+                          << " multiplied by " << config.tempFactor
+                          << " every " << config.tempReduceEvery
+                          << " steps\n";
+
+            }
+            std::cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -";
+            std::cout << std::endl;
         }
 
         fast_kiss_state32_t state = get_initial_fast_kiss_state32(config.seed);
@@ -386,7 +419,7 @@ public:
             uint32_t gpuSeed = fast_kiss32(&state) + iteration;
 
             vectorMatrixMultCompareRowWarpShared 
-                <<< SDIV(min(config.linesAtOnce, height), WARPSPERBLOCK), WARPSPERBLOCK*32 >>>
+                <<< SDIV(min(linesAtOnce, height), WARPSPERBLOCK), WARPSPERBLOCK*32 >>>
                 (d_A, d_B, d_C, height, width, width_C_padded,
                  lineToBeChanged, d_distance, gpuSeed, temperature);
 
@@ -397,7 +430,7 @@ public:
             gpuSeed = fast_kiss32(&state) + iteration;
 
             vectorMatrixMultCompareColWarpShared 
-                <<< SDIV(min(config.linesAtOnce, width), WARPSPERBLOCK), WARPSPERBLOCK*32 >>>
+                <<< SDIV(min(linesAtOnce, width), WARPSPERBLOCK), WARPSPERBLOCK*32 >>>
                 (d_A, d_B, d_C, height, width, width_C_padded,
                  lineToBeChanged, d_distance, gpuSeed, temperature);
 
@@ -405,14 +438,15 @@ public:
 
             getDistance();
 
-            if(iteration % config.distanceShowEvery == 0) {
+            if(config.verbosity > 0 && iteration % config.distanceShowEvery == 0) {
                 std::cout << "Iteration: " << iteration 
                           << " \tCurrent distance: " << (float) *distance / (height*width)
                           << " = " << *distance << " elements" << std::endl;
             }
             if(iteration % config.tempReduceEvery == 0) {
                 temperature *= config.tempFactor;
-                std::cout << "Iteration: " << iteration << " \tTemperature: " << temperature << std::endl;
+                if(config.verbosity > 1)
+                    std::cout << "Iteration: " << iteration << " \tTemperature: " << temperature << std::endl;
             }
         }
 
@@ -422,10 +456,10 @@ public:
             if (!(*distance > config.distanceThreshold))
                 std::cout << "Distance below threshold." << std::endl;
 
-            std::cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n";
-            std::cout << "Final distance: " << (float) *distance / (height * width)
-                      << " = " << *distance << " elements" << std::endl;
         }
+        std::cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n";
+        std::cout << "Final distance: " << (float) *distance / (height * width)
+                  << " = " << *distance << " elements" << std::endl;
     }
 
     bool verifyDistance() {
@@ -472,6 +506,7 @@ private:
     size_t height = 0;
     size_t width = 0;
     size_t width_C_padded = 0;
+    int max_parallel_lines;
 };
 
 #endif

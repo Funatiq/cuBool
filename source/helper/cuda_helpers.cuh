@@ -55,8 +55,9 @@
 #endif
 
 // safe division
+#ifndef SDIV
 #define SDIV(x,y)(((x)+(y)-1)/(y))
-
+#endif
 
 
 #define FULLMASK 0xffffffff
