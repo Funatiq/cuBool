@@ -1,9 +1,9 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
-#ifndef THREADSPERBLOCK
-#define THREADSPERBLOCK 512
-#endif
+// #ifndef THREADSPERBLOCK
+// #define THREADSPERBLOCK 512
+// #endif
 #ifndef WARPSPERBLOCK
 #define WARPSPERBLOCK 16
 #endif
@@ -15,6 +15,10 @@
 #endif
 #ifndef INITIALIZATIONMODE
 #define INITIALIZATIONMODE 2
+#endif
+
+#ifndef CHUNK_SIZE
+#define CHUNK_SIZE 32
 #endif
 
 // #ifndef UINT32_MAX

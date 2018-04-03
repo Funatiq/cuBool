@@ -15,10 +15,10 @@ CuBin: source/CuBin_main.cu $(HEADERS)
 	nvcc source/CuBin_main.cu $(FLAGS) -o CuBin
 
 debug: FLAGS += $(DEBUG)
-debug: CuBin
+debug: CuBin test_distance
 
 clean:
-	rm -f CuBin
+	rm -f CuBin test_distance
 
-test_distance: tests/test_cubin_distance.cu $(HEADERS)
+test_distance: tests/test_cubin_distance.cu $(HEADERS) 
 	nvcc tests/test_cubin_distance.cu $(FLAGS) -o test_distance

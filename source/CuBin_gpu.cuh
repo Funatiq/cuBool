@@ -107,36 +107,100 @@ void computeFullDistance(const float * __restrict__ A,
 
     __shared__ int reductionArray[WARPSPERBLOCK];
 
+    __shared__ float B_block[CHUNK_SIZE][32];
+
     const uint32_t dim_mask = FULLMASK >> (32 - DIM_PARAM);
     
     const int i = warpId;
     const int k = warpLane;
+    const bool A_k = A[i*warpSize + k] > 0.5f;
     int error_warp = 0;
-    if (i < height) {
-        for (int j = 0; j < width; ++j) {
-            int lineSum = __any_sync(dim_mask, (A[i*warpSize + k] > 0.5f) && (B[j*warpSize + k] > 0.5f)) ? 1 : 0;
-            if(warpLane == 0) {
-                const int intId = i / 32 * padded_width + j;
-                const int intLane = i % 32;
+    for (int j_chunk = 0; j_chunk < padded_width; j_chunk += CHUNK_SIZE) {
+        for(int j_local = warpIdIntern; j_local < CHUNK_SIZE; j_local += WARPSPERBLOCK) {
+            const int j = j_chunk + j_local;
+            B_block[j_local][k] = j < width ? B[j * warpSize + k] : 0;
+        }
+        __syncthreads();
 
-                const int truthEntry = (Cb[intId] >> (32 - intLane - 1)) & 1; 
-                error_warp += lineSum ^ truthEntry;
+        if (i < height) {
+            for(int j_local = 0; j_local < CHUNK_SIZE; ++j_local) {
+                const int j = j_chunk + j_local;
+                // int lineSum = __any_sync(dim_mask, A_k && (B[j*warpSize + k] > 0.5f)) ? 1 : 0;
+                int lineSum = __any_sync(dim_mask, A_k && (B_block[j_local][k] > 0.5f)) ? 1 : 0;
+
+                if(warpLane == 0) {
+                    const int intId = i / 32 * padded_width + j;
+                    const int intLane = i % 32;
+
+                    const int truthEntry = (Cb[intId] >> (32 - intLane - 1)) & 1; 
+                    error_warp += lineSum ^ truthEntry;
+                }
             }
         }
+        __syncthreads();
     }
+    // if (i < height) {
+    //     for (int j = 0; j < width; ++j) {
+    //         int lineSum = __any_sync(dim_mask, A_k && (B[j*warpSize + k] > 0.5f)) ? 1 : 0;
+    //         if(warpLane == 0) {
+    //             const int intId = i / 32 * padded_width + j;
+    //             const int intLane = i % 32;
+
+    //             const int truthEntry = (Cb[intId] >> (32 - intLane - 1)) & 1; 
+    //             error_warp += lineSum ^ truthEntry;
+    //         }
+    //     }
+    // }
     if(warpLane == 0)
         reductionArray[warpIdIntern] = error_warp;
     __syncthreads();
 
     int error_block;
     if(warpIdIntern == 0) {
-        error_block = warpReduceSum(reductionArray[warpLane], (32 - WARPSPERBLOCK - 1));
-        
+        error_block = warpReduceSum(reductionArray[warpLane], WARPSPERBLOCK);
         // Thread with threadIdx.x==0 now has total error of block
 
-       if (threadIdx.x == 0)
+       if (threadIdx.x == 0) {
             atomicAdd(distance_test, error_block);
+       }
     }
+}
+
+__global__
+void computeFullDistance2(const float * __restrict__ A,
+                         const float * __restrict__ B,
+                         const uint32_t * __restrict__ Cb, 
+                         const int height, const int width,
+                         const int padded_width,
+                         int *distance_test)
+{
+    const int warpId = (threadIdx.x + blockIdx.x * blockDim.x) / warpSize;
+    const int warpLane = threadIdx.x % warpSize;
+
+    __shared__ int reductionArray[WARPSPERBLOCK];
+
+    const int i = warpId;
+    int error_thread = 0;
+    if (i < height) {
+        for (int j = warpLane; j < padded_width; j += warpSize) {
+            int lineSum = 0;
+            #pragma unroll
+            for (int k = 0; k < DIM_PARAM; ++k) {
+                lineSum |= ((A[i*32 + k] > 0.5f) && (B[j*32 + k] > 0.5f)) ? 1 : 0;
+            }
+            const int intId = i / 32 * padded_width + j;
+            const int intLane = i % 32;
+
+            const int truthEntry = (Cb[intId] >> (32 - intLane - 1)) & 1; 
+            error_thread += lineSum ^ truthEntry;
+        }
+    }
+    int error_block = blockReduceSum(error_thread, reductionArray);
+
+    // Thread with threadIdx.x==0 now has total error of block
+
+    if (threadIdx.x == 0)
+        atomicAdd(distance_test, error_block);
 }
 
 // [A] row Change kernel
@@ -435,12 +499,46 @@ public:
         cudaMemset(d_distance, 0, sizeof(int)); CUERR
 
         computeFullDistance <<< SDIV(width, WARPSPERBLOCK), WARPSPERBLOCK*32 >>>
-                        (d_A, d_B, d_C, height, width, width_C_padded, d_distance); CUERR
+                        (d_A, d_B, d_C, height, width, width_C_padded, d_distance);
 
-        cudaMemcpy(distance, d_distance, sizeof(int), cudaMemcpyDeviceToHost);
+        cudaDeviceSynchronize(); CUERR
+
+        cudaMemcpy(distance, d_distance, sizeof(int), cudaMemcpyDeviceToHost); CUERR
 
         return initialized = true;
     }
+
+    bool verifyDistance() {
+        if(!initialized) {
+            std::cerr << "CuBin not initialized." << endl;
+            return false;
+        }
+
+        int* distance_proof;
+        int* d_distance_proof;
+
+        cudaMallocHost(&distance_proof, sizeof(int)); CUERR
+        cudaMalloc(&d_distance_proof, sizeof(int)); CUERR
+        cudaMemset(d_distance_proof, 0, sizeof(int)); CUERR
+
+        computeFullDistance <<< SDIV(width, WARPSPERBLOCK), WARPSPERBLOCK*32 >>>
+                        (d_A, d_B, d_C, height, width, width_C_padded, d_distance_proof);
+
+        cudaDeviceSynchronize(); CUERR
+
+        cudaMemcpy(distance_proof, d_distance_proof, sizeof(int), cudaMemcpyDeviceToHost); CUERR
+
+        bool equal = *distance == *distance_proof;
+        if(!equal) {
+            std::cout << "----- !Distances differ! -----\n";
+            std::cout << "Running distance:  " << *distance << "\n";
+            std::cout << "Real distance:     " << *distance_proof << std::endl;
+        }
+
+        cudaFreeHost(distance_proof);
+        cudaFree(d_distance_proof);
+        return equal;
+    } 
 
     void clear() {
         if(initialized) {
@@ -458,11 +556,32 @@ public:
             std::cerr << "CuBin not initialized." << endl;
             return;
         }
+
+        if(std::is_same<factor_t, uint32_t>::value) {
+            lineSize = 1;
+            lineSizePadded = 1;
+        }
+        if(std::is_same<factor_t, float>::value) {
+            lineSize = DIM_PARAM;
+            lineSizePadded = 32;
+        }
+
+        size_t lineBytes = sizeof(factor_t) * lineSize;
+        size_t lineBytes_padded = sizeof(factor_t) * lineSizePadded;
+
         A.resize(height);
-        cudaMemcpy(A.data(), d_A, sizeof(factor_t) * height, cudaMemcpyDeviceToHost); CUERR
+        cudaMemcpy2D(A.data(), lineBytes,
+                     d_A, lineBytes_padded,
+                     lineBytes,
+                     height,
+                     cudaMemcpyHostToDevice); CUERR
         
         B.resize(width);
-        cudaMemcpy(B.data(), d_B, sizeof(factor_t) * width, cudaMemcpyDeviceToHost); CUERR
+        cudaMemcpy2D(B.data(), lineBytes,
+                     d_B, lineBytes_padded,
+                     lineBytes,
+                     width,
+                     cudaMemcpyHostToDevice); CUERR
     }
 
     int getDistance() {
@@ -574,37 +693,7 @@ public:
         std::cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n";
         std::cout << "Final distance: " << (float) *distance / (height * width)
                   << " = " << *distance << " elements" << std::endl;
-    }
-
-    bool verifyDistance() {
-        if(!initialized) {
-            std::cerr << "CuBin not initialized." << endl;
-            return false;
-        }
-
-        int* distance_proof;
-        int* d_distance_proof;
-
-        cudaMallocHost(&distance_proof, sizeof(int)); CUERR
-        cudaMalloc(&d_distance_proof, sizeof(int)); CUERR
-        cudaMemset(d_distance_proof, 0, sizeof(int)); CUERR
-
-        computeFullDistance <<< SDIV(width, WARPSPERBLOCK), WARPSPERBLOCK*32 >>>
-                        (d_A, d_B, d_C, height, width, width_C_padded, d_distance_proof); CUERR
-
-        cudaMemcpy(distance_proof, d_distance_proof, sizeof(int), cudaMemcpyDeviceToHost);
-
-        bool equal = *distance == *distance_proof;
-        if(!equal) {
-            std::cout << "----- !Distances differ! -----\n";
-            std::cout << "Running distance:  " << *distance << "\n";
-            std::cout << "Real distance:     " << *distance_proof << std::endl;
-        }
-
-        cudaFreeHost(distance_proof);
-        cudaFree(d_distance_proof);
-        return equal;
-    }   
+    }  
 
 private:
     bool initialized = false;
