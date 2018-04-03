@@ -94,8 +94,8 @@ void computeFullDistance(const uint32_t * __restrict__ Ab,
 }
 
 __global__
-void computeFullDistance(const float * __restrict__ Ab,
-                         const float * __restrict__ Bb,
+void computeFullDistance(const float * __restrict__ A,
+                         const float * __restrict__ B,
                          const uint32_t * __restrict__ Cb, 
                          const int height, const int width,
                          const int padded_width,
@@ -105,14 +105,16 @@ void computeFullDistance(const float * __restrict__ Ab,
     const int warpIdIntern = threadIdx.x / warpSize;
     const int warpLane = threadIdx.x % warpSize;
 
-    __shared__ int reductionArray[THREADSPERBLOCK/32];
+    __shared__ int reductionArray[WARPSPERBLOCK];
+
+    const uint32_t dim_mask = FULLMASK >> (32 - DIM_PARAM);
     
     const int i = warpId;
     const int k = warpLane;
     int error_warp = 0;
     if (i < height) {
         for (int j = 0; j < width; ++j) {
-            int lineSum = __any_sync(FULLMASK, Ab[i*warpSize + k] > 0.5f) & (Bb[j*warpSize + k] > 0.5f) ? 1 : 0;
+            int lineSum = __any_sync(dim_mask, (A[i*warpSize + k] > 0.5f) && (B[j*warpSize + k] > 0.5f)) ? 1 : 0;
             if(warpLane == 0) {
                 const int intId = i / 32 * padded_width + j;
                 const int intLane = i % 32;
@@ -128,7 +130,7 @@ void computeFullDistance(const float * __restrict__ Ab,
 
     int error_block;
     if(warpIdIntern == 0) {
-        error_block = warpReduceSum(reductionArray[warpLane], FULLMASK >> (32 - THREADSPERBLOCK/32 - 1));
+        error_block = warpReduceSum(reductionArray[warpLane], (32 - WARPSPERBLOCK - 1));
         
         // Thread with threadIdx.x==0 now has total error of block
 
@@ -136,7 +138,6 @@ void computeFullDistance(const float * __restrict__ Ab,
             atomicAdd(distance_test, error_block);
     }
 }
-
 
 // [A] row Change kernel
 template<typename bit_vector_t>
@@ -433,7 +434,7 @@ public:
         cudaMalloc(&d_distance, sizeof(int)); CUERR
         cudaMemset(d_distance, 0, sizeof(int)); CUERR
 
-        computeFullDistance <<< SDIV(width, THREADSPERBLOCK/32), THREADSPERBLOCK >>>
+        computeFullDistance <<< SDIV(width, WARPSPERBLOCK), WARPSPERBLOCK*32 >>>
                         (d_A, d_B, d_C, height, width, width_C_padded, d_distance); CUERR
 
         cudaMemcpy(distance, d_distance, sizeof(int), cudaMemcpyDeviceToHost);
@@ -588,7 +589,7 @@ public:
         cudaMalloc(&d_distance_proof, sizeof(int)); CUERR
         cudaMemset(d_distance_proof, 0, sizeof(int)); CUERR
 
-        computeFullDistance <<< SDIV(width, THREADSPERBLOCK/32), THREADSPERBLOCK >>>
+        computeFullDistance <<< SDIV(width, WARPSPERBLOCK), WARPSPERBLOCK*32 >>>
                         (d_A, d_B, d_C, height, width, width_C_padded, d_distance_proof); CUERR
 
         cudaMemcpy(distance_proof, d_distance_proof, sizeof(int), cudaMemcpyDeviceToHost);

@@ -17,12 +17,11 @@
 
 using namespace std;
 
-template<typename bit_vector_t>
 void generate_random_matrix(int height, int width, int num_kiss, 
-                            vector<bit_vector_t> &Ab, vector<bit_vector_t> &Bb, vector<bit_vector_t> &C0b,
+                            vector<uint32_t> &Ab, vector<uint32_t> &Bb, vector<uint32_t> &C0b,
                             float &density)
 {
-    bit_vector_t bit_vector_mask = bit_vector_t(~0) << (32-DIM_PARAM);
+    uint32_t bit_vector_mask = uint32_t(~0) << (32-DIM_PARAM);
 
     Ab.clear();
     Ab.resize(height, bit_vector_mask);
@@ -77,25 +76,47 @@ void generate_random_matrix(int height, int width, int num_kiss,
     printf("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
 }
 
-template<typename bit_vector_t>
 void generate_random_matrix(int height, int width, int num_kiss, 
-                            vector<float> &Ab, vector<float> &Bb, vector<bit_vector_t> &C0b,
+                            vector<float> &A, vector<float> &B, vector<uint32_t> &C0b,
                             float &density)
 {
-    Ab.clear();
-    Ab.resize(height * DIM_PARAM, 0);
-    Bb.clear();
-    Bb.resize(width * DIM_PARAM, 0);
+    uint32_t bit_vector_mask = uint32_t(~0) << (32-DIM_PARAM);
+    
+    A.clear();
+    A.resize(height * DIM_PARAM, 0);
+    B.clear();
+    B.resize(width * DIM_PARAM, 0);
 
     uint32_t seed = 42;
     fast_kiss_state32_t state = get_initial_fast_kiss_state32(seed);
 
-    for(int i=0; i < height * DIM_PARAM; ++i) {
-        Ab[i] = (float) fast_kiss32(&state) / UINT32_MAX;
+    for(int i=0; i < height; ++i) {
+        uint32_t mask = bit_vector_mask;
+        for(int kiss = 0; kiss < num_kiss; ++kiss)
+            mask &= fast_kiss32(&state);
+        for(int k=0; k < DIM_PARAM; ++k)
+            A[i * DIM_PARAM + k] = (mask >> 32 - 1 - k) & 1 ? 1 : 0;
     }
-    for(int j=0; j < width * DIM_PARAM; ++j) {
-        Bb[j] = (float) fast_kiss32(&state) / UINT32_MAX;
+    for(int j=0; j < width; ++j) {
+        uint32_t mask = bit_vector_mask;
+        for(int kiss = 0; kiss < num_kiss; ++kiss)
+            mask &= fast_kiss32(&state);
+        for(int k=0; k < DIM_PARAM; ++k)
+            B[j * DIM_PARAM + k] = (mask >> 32 - 1 - k) & 1 ? 1 : 0;
     }
+
+    // float threshold = 1.0f;
+    // for(int kiss = 0; kiss < num_kiss; ++kiss)
+    //     threshold /= 2.0f;
+
+    // for(int i=0; i < height * DIM_PARAM; ++i) {
+    //     float random = (float) fast_kiss32(&state) / UINT32_MAX;
+    //     A[i] = random < threshold ? 1.0f : 0.0f;
+    // }
+    // for(int j=0; j < width * DIM_PARAM; ++j) {
+    //     float random = (float) fast_kiss32(&state) / UINT32_MAX;
+    //     B[i] = random < threshold ? 1.0f : 0.0f;
+    // }
 
     // Malloc for C0b
     int padded_height_32 = SDIV(height, 32);
@@ -111,7 +132,7 @@ void generate_random_matrix(int height, int width, int num_kiss,
     for(int j=0; j < width; ++j) {
         for(int i=0; i < height; ++i) {
             for (int k=0; k < DIM_PARAM; ++k) {
-                if((Ab[i * DIM_PARAM + k] > 0.5f) & (Bb[j * DIM_PARAM + k] > 0.5f)) {
+                if((A[i * DIM_PARAM + k] > 0.5f) && (B[j * DIM_PARAM + k] > 0.5f)) {
                     // int index = j*height+i;
                     int intId = i / 32 * width + j;
                     int intLane = i % 32;
@@ -134,9 +155,8 @@ void generate_random_matrix(int height, int width, int num_kiss,
     printf("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
 }
 
-template<typename bit_vector_t>
 void readInputFileData(const string filename,
-                       vector<bit_vector_t> &C0b,
+                       vector<uint32_t> &C0b,
                        int &height, int &width, 
                        float &density)
 {
@@ -154,10 +174,10 @@ void readInputFileData(const string filename,
     width = stoi(field, nullptr);
     
     // Malloc for C0b
-    int padded_height_32 = SDIV(height,32);
+    int padded_height_32 = SDIV(height, 32);
     int sizeCb = padded_height_32 * width;
 
-    // C0b = (bit_vector_t *) malloc(sizeof(bit_vector_t) * sizeCb);
+    // C0b = (uint32_t *) malloc(sizeof(uint32_t) * sizeCb);
     C0b.clear();
     C0b.resize(sizeCb,0);
 
@@ -191,8 +211,7 @@ bool endsWith(const string& s, const string& suffix) {
 }
 
 // Write result matrix in file
-template<typename bit_vector_t, typename element_t = uint8_t>
-void writeToFiles(bit_vector_t* Ab, bit_vector_t* Bb, int height, int width)
+void writeToFiles(uint32_t* Ab, uint32_t* Bb, int height, int width)
 {
     time_t rawtime;
     struct tm * timeinfo;
@@ -230,8 +249,7 @@ void writeToFiles(bit_vector_t* Ab, bit_vector_t* Bb, int height, int width)
 }
 
 // Initialization of A and B
-template<typename bit_vector_t>
-void initializeFactors( vector<bit_vector_t> &Ab, vector<bit_vector_t> &Bb, 
+void initializeFactors( vector<uint32_t> &Ab, vector<uint32_t> &Bb, 
                         int height, int width,
                         float density, fast_kiss_state32_t *state,
                         int padded_height = 0, int padded_width = 0)
@@ -281,6 +299,41 @@ void initializeFactors( vector<bit_vector_t> &Ab, vector<bit_vector_t> &Bb,
                                         break;
             }
             Bb[i] |= threshold ? 1 << (32 - j - 1) : 0 ;
+        }
+    }
+    
+    printf("Initialization of A and B complete\n");
+    printf("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
+}
+
+// Initialization of A and B
+void initializeFactors( vector<float> &A, vector<float> &B, 
+                        int height, int width,
+                        float density, fast_kiss_state32_t *state,
+                        int padded_height = 0, int padded_width = 0)
+{
+    if (padded_height == 0)
+        padded_height = height;
+    if (padded_width == 0)
+        padded_width = width;
+
+    A.clear();
+    A.resize(padded_height * DIM_PARAM, 0);
+    B.clear();
+    B.resize(padded_width * DIM_PARAM, 0);
+
+    // Initialize A and B and copy to device
+    for (int i = 0; i < height; i++) {
+        #pragma unroll
+        for (int j = 0; j < DIM_PARAM; j++) {
+            A[i * DIM_PARAM + j] = (float) fast_kiss32(state) / UINT32_MAX;
+        }
+    }
+
+    for (int i = 0; i < width; i++) {
+        #pragma unroll
+        for (int j = 0; j < DIM_PARAM; j++) {
+            B[i * DIM_PARAM + j] = (float) fast_kiss32(state) / UINT32_MAX;
         }
     }
     
