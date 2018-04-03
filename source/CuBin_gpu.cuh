@@ -108,6 +108,7 @@ void computeFullDistance(const float * __restrict__ A,
     __shared__ int reductionArray[WARPSPERBLOCK];
 
     __shared__ float B_block[CHUNK_SIZE][32];
+    __shared__ uint32_t C_block[CHUNK_SIZE];
 
     const uint32_t dim_mask = FULLMASK >> (32 - DIM_PARAM);
     
@@ -119,20 +120,25 @@ void computeFullDistance(const float * __restrict__ A,
         for(int j_local = warpIdIntern; j_local < CHUNK_SIZE; j_local += WARPSPERBLOCK) {
             const int j = j_chunk + j_local;
             B_block[j_local][k] = j < width ? B[j * warpSize + k] : 0;
+            if(warpLane == 0) {
+                const int intId = i / 32 * padded_width + j;
+                C_block[j_local] = Cb[intId];
+            }
         }
         __syncthreads();
 
         if (i < height) {
             for(int j_local = 0; j_local < CHUNK_SIZE; ++j_local) {
-                const int j = j_chunk + j_local;
+                // const int j = j_chunk + j_local;
                 // int lineSum = __any_sync(dim_mask, A_k && (B[j*warpSize + k] > 0.5f)) ? 1 : 0;
                 int lineSum = __any_sync(dim_mask, A_k && (B_block[j_local][k] > 0.5f)) ? 1 : 0;
 
                 if(warpLane == 0) {
-                    const int intId = i / 32 * padded_width + j;
+                    // const int intId = i / 32 * padded_width + j;
                     const int intLane = i % 32;
 
-                    const int truthEntry = (Cb[intId] >> (32 - intLane - 1)) & 1; 
+                    // const int truthEntry = (Cb[intId] >> (32 - intLane - 1)) & 1; 
+                    const int truthEntry = (C_block[j_local] >> (32 - intLane - 1)) & 1; 
                     error_warp += lineSum ^ truthEntry;
                 }
             }
@@ -175,32 +181,71 @@ void computeFullDistance2(const float * __restrict__ A,
                          int *distance_test)
 {
     const int warpId = (threadIdx.x + blockIdx.x * blockDim.x) / warpSize;
+    const int warpIdIntern = threadIdx.x / warpSize;
     const int warpLane = threadIdx.x % warpSize;
 
     __shared__ int reductionArray[WARPSPERBLOCK];
 
-    const int i = warpId;
-    int error_thread = 0;
-    if (i < height) {
-        for (int j = warpLane; j < padded_width; j += warpSize) {
-            int lineSum = 0;
-            #pragma unroll
-            for (int k = 0; k < DIM_PARAM; ++k) {
-                lineSum |= ((A[i*32 + k] > 0.5f) && (B[j*32 + k] > 0.5f)) ? 1 : 0;
+    __shared__ float A_block[CHUNK_SIZE][32];
+
+    const uint32_t dim_mask = FULLMASK >> (32 - DIM_PARAM);
+
+    const int padded_heigth = SDIV(height, 32) * 32;
+    
+    const int j = warpId;
+    const int k = warpLane;
+    const bool B_k = B[j*warpSize + k] > 0.5f;
+    int error_warp = 0;
+    for (int i_chunk = 0; i_chunk < padded_heigth; i_chunk += CHUNK_SIZE) {
+        for(int i_local = warpIdIntern; i_local < CHUNK_SIZE; i_local += WARPSPERBLOCK) {
+            const int i = i_chunk + i_local;
+            A_block[i_local][k] = i < width ? A[i * warpSize + k] : 0;
+       }
+        __syncthreads();
+
+        if (j < width) {
+            const int intId = i_chunk / 32 * padded_width + j;
+            const uint32_t Cb_chunk = Cb[intId];
+            for(int i_local = 0; i_local < CHUNK_SIZE; ++i_local) {
+                const int i = i_chunk + i_local;
+                // int lineSum = __any_sync(dim_mask, A_k && (B[j*warpSize + k] > 0.5f)) ? 1 : 0;
+                int lineSum = __any_sync(dim_mask, B_k && (A_block[i_local][k] > 0.5f)) ? 1 : 0;
+
+                if(warpLane == 0) {
+                    const int intLane = i % 32;
+
+                    const int truthEntry = (Cb_chunk >> (32 - intLane - 1)) & 1; 
+                    error_warp += lineSum ^ truthEntry;
+                }
             }
-            const int intId = i / 32 * padded_width + j;
-            const int intLane = i % 32;
-
-            const int truthEntry = (Cb[intId] >> (32 - intLane - 1)) & 1; 
-            error_thread += lineSum ^ truthEntry;
         }
+        __syncthreads();
     }
-    int error_block = blockReduceSum(error_thread, reductionArray);
+    // if (j < width) {
+    //     for (int i = 0; i < height; ++i) {
+    //         int lineSum = __any_sync(dim_mask, B_k && (A[i*warpSize + k] > 0.5f)) ? 1 : 0;
+    //         if(warpLane == 0) {
+    //             const int intId = i / 32 * padded_width + j;
+    //             const int intLane = i % 32;
 
-    // Thread with threadIdx.x==0 now has total error of block
+    //             const int truthEntry = (Cb[intId] >> (32 - intLane - 1)) & 1; 
+    //             error_warp += lineSum ^ truthEntry;
+    //         }
+    //     }
+    // }
+    if(warpLane == 0)
+        reductionArray[warpIdIntern] = error_warp;
+    __syncthreads();
 
-    if (threadIdx.x == 0)
-        atomicAdd(distance_test, error_block);
+    int error_block;
+    if(warpIdIntern == 0) {
+        error_block = warpReduceSum(reductionArray[warpLane], WARPSPERBLOCK);
+        // Thread with threadIdx.x==0 now has total error of block
+
+       if (threadIdx.x == 0) {
+            atomicAdd(distance_test, error_block);
+       }
+    }
 }
 
 // [A] row Change kernel
