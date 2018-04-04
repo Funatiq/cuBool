@@ -572,11 +572,12 @@ vectorMatrixMultCompareColWarpShared(const float * __restrict__ A,
 
     const int padded_width_blocks = SDIV(width, WARPSPERBLOCK) * WARPSPERBLOCK;
     const int j = (startcol + warpId) % padded_width_blocks;
+    const int jFirst = (startcol + warpFirst) % padded_width_blocks;
     
     const int k = warpLane;
-    const float B_j_k_float = j < height ? A[j * warpSize + k] : 0;
+    const float B_j_k_float = j < width ? B[j * warpSize + k] : 0;
     float B_j_k_float_changed = B_j_k_float;
-    if (j < height) {
+    if (j < width) {
         state = get_initial_fast_kiss_state32(seed + warpId);
 
         B_j_k_float_changed += get_float_update(&state, flipManyChance);
@@ -592,17 +593,17 @@ vectorMatrixMultCompareColWarpShared(const float * __restrict__ A,
         #pragma unroll
         for(int i_local = warpIdIntern; i_local < CHUNK_SIZE; i_local += WARPSPERBLOCK) {
             const int i = i_chunk + i_local;
-            A_block[i_local][k] = i < width ? A[i * warpSize + k] : 0;
+            A_block[i_local][k] = i < height ? A[i * warpSize + k] : 0;
         }
         if(threadIdx.x < WARPSPERBLOCK) {
-            const int j = warpFirst;
-            const int vecRow = i_chunk / 32;
-            const int vecId = vecRow * padded_width + j;
-            C_block[threadIdx.x] = Cb[vecId + threadIdx.x];
+            const int vecRow = i_chunk / 32; // + i_local / 32 (=0)
+            const int vecFirst = vecRow * padded_width + jFirst;
+            C_block[threadIdx.x] = Cb[vecFirst + threadIdx.x];
         }
         __syncthreads();
 
         if (j < width) {
+            // const int C_warp = C_block[warpIdIntern];
             #pragma unroll
             for(int i_local = 0; i_local < CHUNK_SIZE; ++i_local) {
                 const bool A_i_k = A_block[i_local][k] > 0.5f;
@@ -613,6 +614,8 @@ vectorMatrixMultCompareColWarpShared(const float * __restrict__ A,
                 const int vecLane = i % 32;
                 const int shift = (32 - vecLane - 1);
                 const int cTruthEntry = (C_block[warpIdIntern] >> shift) & 1; 
+                // const int cTruthEntry = (C_warp >> shift) & 1;
+                // const int cTruthEntry = (Cb[i_chunk/32*padded_width+j] >> shift) & 1;
 
                 error_warp += (cEntryNew ^ cTruthEntry) - (cEntryOld ^ cTruthEntry);
             }
@@ -621,7 +624,7 @@ vectorMatrixMultCompareColWarpShared(const float * __restrict__ A,
     }
     // each thread now has total error of warp
 
-    if (j < height) {
+    if (j < width) {
         // Metropolis–Hastings algorithm
         if (metro(&state, error_warp, temperature)) {
             B[j * warpSize + k] = B_j_k_float_changed;
