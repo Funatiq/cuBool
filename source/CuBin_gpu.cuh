@@ -10,6 +10,7 @@
 #include "helper/rngpu.hpp"
 #include "helper/cuda_helpers.cuh"
 
+// uint32_t vector masks --------------------------------------------------------
 __inline__ __device__
 uint32_t get_flip_mask_many(fast_kiss_state32_t * state, const uint32_t rand_depth) {
     uint32_t bit_flip_mask = FULLMASK;
@@ -24,7 +25,7 @@ uint32_t get_flip_mask_many(fast_kiss_state32_t * state, const uint32_t rand_dep
 __inline__ __device__
 uint32_t get_flip_mask_11(fast_kiss_state32_t * state) {
     uint32_t bit_flip_mask = 0;
-    uint32_t randomNumber = fast_kiss32(state);
+    const uint32_t randomNumber = fast_kiss32(state);
     #pragma unroll
     for (int i = 0; i < DIM_PARAM; i++) {
         bit_flip_mask |= (randomNumber >> i) & 11 ? (0 << 32 - 1 - i) : (1 << 32 - 1 - i);
@@ -34,38 +35,57 @@ uint32_t get_flip_mask_11(fast_kiss_state32_t * state) {
 
 __inline__ __device__
 uint32_t get_flip_mask_one(fast_kiss_state32_t * state) {
-    uint32_t lane = fast_kiss32(state) % DIM_PARAM;
+    const uint32_t lane = fast_kiss32(state) % DIM_PARAM;
     return 1 << (32 - 1 - lane);
 }
 
 __inline__ __device__
 uint32_t get_flip_mask(fast_kiss_state32_t * state,
-                       const float flipManyChance = 1.0f,
-                       const uint32_t flipManyDepth = 2) {
-    float randomNumber = fast_kiss32(state) / (float) UINT32_MAX;
+                       const float flipManyChance,
+                       const uint32_t flipManyDepth) {
+    const float random_many = fast_kiss32(state) / (float) UINT32_MAX;
 
-    return randomNumber < flipManyChance ? get_flip_mask_many(state, flipManyDepth) : get_flip_mask_one(state);
+    return random_many < flipManyChance ? get_flip_mask_many(state, flipManyDepth) : get_flip_mask_one(state);
+}
+
+// float updates ---------------------------------------------------------------
+__inline__ __device__
+float get_float_update_many(fast_kiss_state32_t * state) {
+    return 0.1f;
 }
 
 __inline__ __device__
-float get_update(fast_kiss_state32_t * state) {
-    //todo
-    return 0.0f;
+float get_float_update_one(fast_kiss_state32_t * state) {
+    const uint32_t lane = fast_kiss32(state) % DIM_PARAM;
+    return threadIdx.x % warpSize == lane ? 0.1f : 0.0f;
 }
 
+__inline__ __device__
+float get_float_update(fast_kiss_state32_t * state, const float flipManyChance) {
+    const float random_many = fast_kiss32(state) / (float) UINT32_MAX;
+    float update = random_many < flipManyChance ? get_float_update_many(state) : get_float_update_one(state);
 
+    const float random_factor = fast_kiss32(state) / (float) UINT32_MAX;
+    // update = random_factor < 0.5f ? 5*update : update;
+    update = random_factor < 1.0f ? 5*update : update;
+
+    const float random_sign = fast_kiss32(state) / (float) UINT32_MAX;
+    return random_sign < 0.5f ? update : -1.0*update;
+}
+
+// Metropolis–Hastings algorithm
 __inline__ __device__
 bool metro(fast_kiss_state32_t * state, const int error, const float temperature) {
     if(error < 0)
         return true;
     if(temperature <= 0)
         return false;
-    // Metropolis–Hastings algorithm
-    float randomNumber = fast_kiss32(state) / (float) UINT32_MAX;
-    float metro = fminf(1.0f, expf((float) - error / temperature));
+    const float randomNumber = fast_kiss32(state) / (float) UINT32_MAX;
+    const float metro = fminf(1.0f, expf((float) - error / temperature));
     return randomNumber < metro;
 }
 
+//
 __global__
 void computeFullDistance(const uint32_t * __restrict__ Ab,
                          const uint32_t * __restrict__ Bb,
@@ -100,7 +120,7 @@ void computeFullDistance(const uint32_t * __restrict__ Ab,
 }
 
 __global__
-void computeFullDistance2(const float * __restrict__ A,
+void computeFullDistance(const float * __restrict__ A,
                          const float * __restrict__ B,
                          const uint32_t * __restrict__ Cb, 
                          const int height, const int width,
@@ -121,7 +141,12 @@ void computeFullDistance2(const float * __restrict__ A,
     
     const int i = warpId;
     const int k = warpLane;
-    const bool A_k = A[i*warpSize + k] > 0.5f;
+    const bool A_i_k = A[i*warpSize + k] > 0.5f;
+
+    const int vecRow = i / 32;
+    const int vecFirst = vecRow * padded_width;
+    const int vecLane = i % 32;
+    const int shift = (32 - vecLane - 1);    
     int error_warp = 0;
     for (int j_chunk = 0; j_chunk < padded_width; j_chunk += CHUNK_SIZE) {
         #pragma unroll
@@ -130,19 +155,18 @@ void computeFullDistance2(const float * __restrict__ A,
             B_block[j_local][k] = j < width ? B[j * warpSize + k] : 0;
         }
         if(threadIdx.x < CHUNK_SIZE) {
-            const int intId = i / 32 * padded_width + j_chunk;
-            C_block[threadIdx.x] = Cb[intId + threadIdx.x];
+            const int vecId = vecFirst + j_chunk;
+            C_block[threadIdx.x] = Cb[vecId + threadIdx.x];
         }
         __syncthreads();
 
         if (i < height) {
             #pragma unroll
             for(int j_local = 0; j_local < CHUNK_SIZE; ++j_local) {
-                // int lineSum = __any_sync(dim_mask, A_k && (B[j*warpSize + k] > 0.5f)) ? 1 : 0;
-                const int lineSum = __any_sync(dim_mask, A_k && (B_block[j_local][k] > 0.5f)) ? 1 : 0;
+                // int lineSum = __any_sync(dim_mask, A_i_k && (B[j*warpSize + k] > 0.5f)) ? 1 : 0;
+                const int lineSum = __any_sync(dim_mask, A_i_k && (B_block[j_local][k] > 0.5f)) ? 1 : 0;
 
-                const int intLane = i % 32;
-                const int truthEntry = (C_block[j_local] >> (32 - intLane - 1)) & 1; 
+                const int truthEntry = (C_block[j_local] >> shift) & 1; 
 
                 error_warp += lineSum ^ truthEntry;
             }
@@ -166,7 +190,7 @@ void computeFullDistance2(const float * __restrict__ A,
 }
 
 __global__
-void computeFullDistance(const float * __restrict__ A,
+void computeFullDistance2(const float * __restrict__ A,
                          const float * __restrict__ B,
                          const uint32_t * __restrict__ Cb, 
                          const int height, const int width,
@@ -175,6 +199,7 @@ void computeFullDistance(const float * __restrict__ A,
 {
     // const int warpId = (threadIdx.x + blockIdx.x * blockDim.x) / warpSize;
     const int warpIdIntern = threadIdx.x / warpSize;
+    const int warpFirst = blockIdx.x * WARPSPERBLOCK;
     const int warpId = blockIdx.x * WARPSPERBLOCK + warpIdIntern;
     const int warpLane = threadIdx.x % warpSize;
 
@@ -185,12 +210,12 @@ void computeFullDistance(const float * __restrict__ A,
 
     const uint32_t dim_mask = FULLMASK >> (32 - DIM_PARAM);
 
-    const int padded_heigth = SDIV(height, 32) * 32;
-    
     const int j = warpId;
     const int k = warpLane;
-    const bool B_k = B[j*warpSize + k] > 0.5f;
+    const bool B_j_k = B[j*warpSize + k] > 0.5f;
+
     int error_warp = 0;
+    const int padded_heigth = SDIV(height, 32) * 32;
     for (int i_chunk = 0; i_chunk < padded_heigth; i_chunk += CHUNK_SIZE) {
         #pragma unroll
         for(int i_local = warpIdIntern; i_local < CHUNK_SIZE; i_local += WARPSPERBLOCK) {
@@ -198,21 +223,23 @@ void computeFullDistance(const float * __restrict__ A,
             A_block[i_local][k] = i < height ? A[i * warpSize + k] : 0;
         }
         if(threadIdx.x < WARPSPERBLOCK) {
-            const int j = blockIdx.x * WARPSPERBLOCK;
-            const int intId = i_chunk / 32 * padded_width + j;
-            C_block[threadIdx.x] = Cb[intId + threadIdx.x];
+            const int j = warpFirst;
+            const int vecRow = i_chunk / 32;
+            const int vecId = vecRow * padded_width + j;
+            C_block[threadIdx.x] = Cb[vecId + threadIdx.x];
         }
         __syncthreads();
 
         if (j < width) {
             #pragma unroll
             for(int i_local = 0; i_local < CHUNK_SIZE; ++i_local) {
-                const int i = i_chunk + i_local;
                 // int lineSum = __any_sync(dim_mask, A_k && (B[j*warpSize + k] > 0.5f)) ? 1 : 0;
-                const int lineSum = __any_sync(dim_mask, B_k && (A_block[i_local][k] > 0.5f)) ? 1 : 0;
+                const int lineSum = __any_sync(dim_mask, B_j_k && (A_block[i_local][k] > 0.5f)) ? 1 : 0;
 
-                const int intLane = i % 32;
-                const int truthEntry = (C_block[warpIdIntern] >> (32 - intLane - 1)) & 1; 
+                const int i = i_chunk + i_local;
+                const int vecLane = i % 32;
+                const int shift = (32 - vecLane - 1);
+                const int truthEntry = (C_block[warpIdIntern] >> shift) & 1; 
 
                 error_warp += lineSum ^ truthEntry;
             }
@@ -258,63 +285,66 @@ vectorMatrixMultCompareRowWarpShared(bit_vector_t *A,
     const int warpId = blockIdx.x * WARPSPERBLOCK + threadIdx.x / warpSize;
     const int warpLane = threadIdx.x % warpSize;
 
-    // int rowToBeChanged = (warpId + startrow) % height;
+    // int i = (warpId + startrow) % height;
     const int padded_height_blocks = SDIV(height, WARPSPERBLOCK) * WARPSPERBLOCK;
-    const int rowToBeChanged = (startrow + warpId) % padded_height_blocks;
+    const int i = (startrow + warpId) % padded_height_blocks;
 
     fast_kiss_state32_t state;
     
-    const bit_vector_t currentRow = rowToBeChanged < height ? A[rowToBeChanged] : 0;
-    bit_vector_t currentRow_changed = 0;
-    // if (warpLane == 0 && rowToBeChanged < height) {
+    const bit_vector_t A_i = i < height ? A[i] : 0;
+    bit_vector_t A_i_changed = 0;
+    // if (warpLane == 0 && i < height) {
+    if (i < height) {
         state = get_initial_fast_kiss_state32(seed + warpId);
 
-        currentRow_changed = currentRow ^ get_flip_mask(&state, flipManyChance, flipDepth);
-    // }
-    // currentRow_changed = __shfl_sync(FULLMASK, currentRow_changed, 0);
+        A_i_changed = A_i ^ get_flip_mask(&state, flipManyChance, flipDepth);
+    }
+    // A_i_changed = __shfl_sync(FULLMASK, A_i_changed, 0);
     
-    int error_thread = 0;
-    const int vecRow = rowToBeChanged / 32;
+    const int vecRow = i / 32;
     const int vecFirst = vecRow * padded_width;
-    const int vecLane = rowToBeChanged % 32;
+    const int vecLane = i % 32;
     const int col_in_tile = warpLane;
     const int shift = (32 - vecLane - 1);
     const int padded_width_blocks = SDIV(width, WARPSPERBLOCK*32) * WARPSPERBLOCK*32;
+    int error_thread = 0;
     for (int j = threadIdx.x; j < padded_width_blocks; j += blockDim.x) {
         B_block[threadIdx.x] = (j < width) ? B[j] : 0;
         C_block[threadIdx.x] = C[vecFirst + j];
         __syncthreads();
 
-        #pragma unroll
-        for(int w = 0; w < WARPSPERBLOCK; ++w) {
-            const bit_vector_t currentColThread = B_block[w*warpSize + warpLane];
-            const int cTruthEntry = (C_block[w*warpSize + col_in_tile] >> shift) & 1;
-            // int col = j / blockDim.x * blockDim.x + w*warpSize + warpLane;
-            // bit_vector_t currentColThread = B[col];
-            // int cTruthEntry = (C[vecFirst + col] >> shift) & 1; 
+        if(i < height) {
+            #pragma unroll
+            for(int w = 0; w < WARPSPERBLOCK; ++w) {
+                const bit_vector_t B_j_thread = B_block[w*warpSize + warpLane];
+                const int cTruthEntry = (C_block[w*warpSize + col_in_tile] >> shift) & 1;
+                // int col = j / blockDim.x * blockDim.x + w*warpSize + warpLane;
+                // bit_vector_t B_j_thread = B[col];
+                // int cTruthEntry = (C[vecFirst + col] >> shift) & 1; 
 
-            const int cEntryNew = (currentColThread & currentRow_changed) ? 1 : 0;
-            const int cEntryOld = (currentColThread & currentRow        ) ? 1 : 0;
+                const int cEntryNew = (B_j_thread & A_i_changed) ? 1 : 0;
+                const int cEntryOld = (B_j_thread & A_i        ) ? 1 : 0;
 
-            // if (col < width)
-            error_thread += (cEntryNew ^ cTruthEntry) - (cEntryOld ^ cTruthEntry);
+                // if (col < width)
+                error_thread += (cEntryNew ^ cTruthEntry) - (cEntryOld ^ cTruthEntry);
+            }
         }
         __syncthreads();
     }
-    // if(rowToBeChanged < height) {
+    if(i < height) {
         const int error_warp = warpReduceSum(error_thread);
         // Thread with warpLane==0 now has total error of warp
 
         // Thread 0 checks if new low has been found and applies if necessary
-        if (rowToBeChanged < height && warpLane == 0) {
-        // if (warpLane == 0) {
+        if (warpLane == 0) {
+        // if (i < height && warpLane == 0) {
             // Metropolis–Hastings algorithm
             if (metro(&state, error_warp, temperature)) {
-                A[rowToBeChanged] = currentRow_changed;
+                A[i] = A_i_changed;
                 atomicAdd(global_error, error_warp);
             }
         }
-    // }
+    }
 }
 
 // [B] col change kernel
@@ -344,79 +374,83 @@ vectorMatrixMultCompareColWarpShared(const bit_vector_t * __restrict__ A,
     const int warpLane = threadIdx.x % warpSize;
 
 
-    // int colToBeChanged = (startcol + warpId) % width;
+    // int j = (startcol + warpId) % width;
     const int padded_width_blocks = SDIV(width, WARPSPERBLOCK) * WARPSPERBLOCK;
-    const int colToBeChanged = (startcol + warpId) % padded_width_blocks;
+    const int j = (startcol + warpId) % padded_width_blocks;
 
     fast_kiss_state32_t state;
 
-    const bit_vector_t currentCol = colToBeChanged < width ? B[colToBeChanged] : 0;
-    bit_vector_t currentCol_changed = 0;
-    // if (warpLane == 0 && colToBeChanged < width) {
+    const bit_vector_t B_j = j < width ? B[j] : 0;
+    bit_vector_t B_j_changed = 0;
+    // if (warpLane == 0 && j < width) {
+    if (j < width) {
         state = get_initial_fast_kiss_state32(seed + warpId);
 
-        currentCol_changed = currentCol ^ get_flip_mask(&state, flipManyChance, flipManyDepth);
-    // }
-    // currentCol_changed = __shfl_sync(FULLMASK, currentCol_changed, 0);
+        B_j_changed = B_j ^ get_flip_mask(&state, flipManyChance, flipManyDepth);
+    }
+    // B_j_changed = __shfl_sync(FULLMASK, B_j_changed, 0);
     
     int error_thread = 0;
     const int vecLane = warpLane;
-    const int col_in_tile = colToBeChanged % 32;
-    const int colFirst = colToBeChanged / 32 * 32;
+    const int col_in_tile = j % 32;
+    const int colFirst = j / 32 * 32;
     const int shift = (32 - vecLane - 1);
     const int padded_height_blocks = SDIV(height, WARPSPERBLOCK*32) * WARPSPERBLOCK*32;
     for (int i = threadIdx.x; i < padded_height_blocks; i += blockDim.x) {
         A_block[threadIdx.x] = (i < height) ? A[i] : 0;
-        int vecRow = i / 32;
-        int vecFirst = vecRow * padded_width + colFirst;
+        const int vecRow = i / 32;
+        const int vecFirst = vecRow * padded_width + colFirst;
         C_block[threadIdx.x] = C[vecFirst + warpLane];
         __syncthreads();
 
-        #pragma unroll
-        for(int w = 0; w < WARPSPERBLOCK; ++w) {
-            const bit_vector_t currentRowThread = A_block[w*warpSize + warpLane];
-            const int cTruthEntry = (C_block[w*warpSize + col_in_tile] >> shift) & 1;
+        if (j < width) {
+            #pragma unroll
+            for(int w = 0; w < WARPSPERBLOCK; ++w) {
+                const bit_vector_t A_i_thread = A_block[w*warpSize + warpLane];
+                const int cTruthEntry = (C_block[w*warpSize + col_in_tile] >> shift) & 1;
 
-            // int row = i / blockDim.x * blockDim.x + w*warpSize + warpLane;
-            // bit_vector_t currentRowThread = (row < height) ? A[row] : 0;
-            // int cTruthEntry = (C[vecFirst + col_in_tile] >> shift) & 1; 
+                // int row = i / blockDim.x * blockDim.x + w*warpSize + warpLane;
+                // bit_vector_t A_i_thread = (row < height) ? A[row] : 0;
+                // int cTruthEntry = (C[vecFirst + col_in_tile] >> shift) & 1; 
 
-            const int cEntryNew = (currentRowThread & currentCol_changed) > 0 ? 1 : 0;
-            const int cEntryOld = (currentRowThread & currentCol        ) > 0 ? 1 : 0;
+                const int cEntryNew = (A_i_thread & B_j_changed) > 0 ? 1 : 0;
+                const int cEntryOld = (A_i_thread & B_j        ) > 0 ? 1 : 0;
 
-            // if (row < height)
-            error_thread += (cEntryNew ^ cTruthEntry) - (cEntryOld ^ cTruthEntry);
+                // if (row < height)
+                error_thread += (cEntryNew ^ cTruthEntry) - (cEntryOld ^ cTruthEntry);
+            }
         }
         __syncthreads();
     }
-    // if (colToBeChanged < width) {
+    if (j < width) {
         const int error_warp = warpReduceSum(error_thread);
         // Thread with warpLane==0 now has total error of warp
         // if (warpLane == 0) {
-        //     const bool pred = (colToBeChanged < width) && metro(&state, error_warp, temperature);
+        //     const bool pred = (j < width) && metro(&state, error_warp, temperature);
         //     error_warps[warpIdIntern] = pred ? error_warp : 0;
-        //     B_block[warpIdIntern] = pred ? currentCol_changed : currentCol;
+        //     B_block[warpIdIntern] = pred ? B_j_changed : B_j;
         // }
         // __syncthreads();
 
         // if (warpIdIntern == 0 && warpLane < WARPSPERBLOCK) {
         //     const uint32_t mask = FULLMASK >> (32 - WARPSPERBLOCK - 1);
 
-        //     B[colToBeChanged + warpLane] = B_block[warpLane];
+        //     B[j + warpLane] = B_block[warpLane];
         //     const int error_block = warpReduceSum(error_warps[warpLane], mask);
         //     if (warpLane == 0)
         //         atomicAdd(global_error, error_block);
         // }
 
         // Thread 0 checks if new low has been found and applies if necessary
-        if (colToBeChanged < width && warpLane == 0) {
+        if (warpLane == 0) {
+        // if (j < width && warpLane == 0) {
             // Metropolis–Hastings algorithm
             if (metro(&state, error_warp, temperature)) {
-                B[colToBeChanged] = currentCol_changed;
+                B[j] = B_j_changed;
                 atomicAdd(global_error, error_warp);
             }
         }
-    // }
+    }
 }
 
 // [A] row Change kernel
@@ -445,23 +479,28 @@ vectorMatrixMultCompareRowWarpShared(float *A,
 
     const uint32_t dim_mask = FULLMASK >> (32 - DIM_PARAM);
 
-    const int padded_height_blocks = SDIV(height, WARPSPERBLOCK) * WARPSPERBLOCK;
-    const int rowToBeChanged = (startrow + warpId) % padded_height_blocks;
-
     fast_kiss_state32_t state;
-    
-    const float currentRow_k = rowToBeChanged < height ? A[rowToBeChanged * warpSize + warpLane] : 0;
-    float currentRow_k_changed = currentRow_k;
-    if (rowToBeChanged < height) {
+
+    const int padded_height_blocks = SDIV(height, WARPSPERBLOCK) * WARPSPERBLOCK;
+    const int i = (startrow + warpId) % padded_height_blocks;
+
+    const int k = warpLane;
+    const float A_i_k_float = i < height ? A[i * warpSize + k] : 0;
+    float A_i_k_float_changed = A_i_k_float;
+    if (i < height) {
         state = get_initial_fast_kiss_state32(seed + warpId);
 
-        currentRow_k_changed += get_update(&state);
+        A_i_k_float_changed += get_float_update(&state, flipManyChance);
+        A_i_k_float_changed = A_i_k_float_changed > 1.0f ? 1.0f : A_i_k_float_changed;
+        A_i_k_float_changed = A_i_k_float_changed < 0.0f ? 0.0f : A_i_k_float_changed;
     }
-    
-    const int i = warpId;
-    const int k = warpLane;
-    const bool A_k = currentRow_k > 0.5f;
-    const bool A_k_changed = currentRow_k_changed > 0.5f;
+    const bool A_i_k = A_i_k_float > 0.5f;
+    const bool A_i_k_changed = A_i_k_float_changed > 0.5f;
+
+    const int vecRow = i / 32;
+    const int vecFirst = vecRow * padded_width;
+    const int vecLane = i % 32;
+    const int shift = (32 - vecLane - 1);
     int error_warp = 0;
     for (int j_chunk = 0; j_chunk < padded_width; j_chunk += CHUNK_SIZE) {
         #pragma unroll
@@ -470,19 +509,19 @@ vectorMatrixMultCompareRowWarpShared(float *A,
             B_block[j_local][k] = j < width ? B[j * warpSize + k] : 0;
         }
         if(threadIdx.x < CHUNK_SIZE) {
-            const int intId = i / 32 * padded_width + j_chunk;
-            C_block[threadIdx.x] = Cb[intId + threadIdx.x];
+            const int vecId = vecFirst + j_chunk;
+            C_block[threadIdx.x] = Cb[vecId + threadIdx.x];
         }
         __syncthreads();
 
         if (i < height) {
             #pragma unroll
             for(int j_local = 0; j_local < CHUNK_SIZE; ++j_local) {
-                int cEntryOld = __any_sync(dim_mask, A_k && (B_block[j_local][k] > 0.5f)) ? 1 : 0;
-                int cEntryNew = __any_sync(dim_mask, A_k_changed && (B_block[j_local][k] > 0.5f)) ? 1 : 0;
+                const bool B_j_k = B_block[j_local][k] > 0.5f;
+                const int cEntryOld = __any_sync(dim_mask, A_i_k && B_j_k) ? 1 : 0;
+                const int cEntryNew = __any_sync(dim_mask, A_i_k_changed && B_j_k) ? 1 : 0;
 
-                const int intLane = i % 32;
-                const int cTruthEntry = (C_block[j_local] >> (32 - intLane - 1)) & 1; 
+                const int cTruthEntry = (C_block[j_local] >> shift) & 1; 
 
                 error_warp += (cEntryNew ^ cTruthEntry) - (cEntryOld ^ cTruthEntry);
             }
@@ -491,10 +530,10 @@ vectorMatrixMultCompareRowWarpShared(float *A,
     }
     // each thread now has total error of warp
 
-    if (rowToBeChanged < height) {
+    if (i < height) {
         // Metropolis–Hastings algorithm
         if (metro(&state, error_warp, temperature)) {
-            A[rowToBeChanged * warpSize + warpLane] = currentRow_k_changed;
+            A[i * warpSize + k] = A_i_k_float_changed;
             // only one thread updates the global error
             if (warpLane == 0)
                 atomicAdd(global_error, error_warp);
@@ -520,6 +559,7 @@ vectorMatrixMultCompareColWarpShared(const float * __restrict__ A,
 {
     // const int warpId = (threadIdx.x + blockIdx.x * blockDim.x) / warpSize;
     const int warpIdIntern = threadIdx.x / warpSize;
+    const int warpFirst = blockIdx.x * WARPSPERBLOCK;
     const int warpId = blockIdx.x * WARPSPERBLOCK + warpIdIntern;
     const int warpLane = threadIdx.x % warpSize;
 
@@ -528,23 +568,24 @@ vectorMatrixMultCompareColWarpShared(const float * __restrict__ A,
 
     const uint32_t dim_mask = FULLMASK >> (32 - DIM_PARAM);
 
-    const int padded_width_blocks = SDIV(width, WARPSPERBLOCK) * WARPSPERBLOCK;
-    const int colToBeChanged = (startcol + warpId) % padded_width_blocks;
-
     fast_kiss_state32_t state;
+
+    const int padded_width_blocks = SDIV(width, WARPSPERBLOCK) * WARPSPERBLOCK;
+    const int j = (startcol + warpId) % padded_width_blocks;
     
-    const float currentCol_k = colToBeChanged < height ? A[colToBeChanged * warpSize + warpLane] : 0;
-    float currentCol_k_changed = currentCol_k;
-    if (colToBeChanged < height) {
+    const int k = warpLane;
+    const float B_j_k_float = j < height ? A[j * warpSize + k] : 0;
+    float B_j_k_float_changed = B_j_k_float;
+    if (j < height) {
         state = get_initial_fast_kiss_state32(seed + warpId);
 
-        currentCol_k_changed += get_update(&state);
+        B_j_k_float_changed += get_float_update(&state, flipManyChance);
+        B_j_k_float_changed = B_j_k_float_changed > 1.0f ? 1.0f : B_j_k_float_changed;
+        B_j_k_float_changed = B_j_k_float_changed < 0.0f ? 0.0f : B_j_k_float_changed;
     }
-    
-    const int j = warpId;
-    const int k = warpLane;
-    const bool B_k = currentCol_k > 0.5f;
-    const bool B_k_changed = currentCol_k_changed > 0.5f;
+    const bool B_j_k = B_j_k_float > 0.5f;
+    const bool B_j_k_changed = B_j_k_float_changed > 0.5f;
+
     int error_warp = 0;
     const int padded_heigth = SDIV(height, 32) * 32;
     for (int i_chunk = 0; i_chunk < padded_heigth; i_chunk += CHUNK_SIZE) {
@@ -554,22 +595,24 @@ vectorMatrixMultCompareColWarpShared(const float * __restrict__ A,
             A_block[i_local][k] = i < width ? A[i * warpSize + k] : 0;
         }
         if(threadIdx.x < WARPSPERBLOCK) {
-            const int j = blockIdx.x * WARPSPERBLOCK;
-            const int intId = i_chunk / 32 * padded_width + j;
-            C_block[threadIdx.x] = Cb[intId + threadIdx.x];
+            const int j = warpFirst;
+            const int vecRow = i_chunk / 32;
+            const int vecId = vecRow * padded_width + j;
+            C_block[threadIdx.x] = Cb[vecId + threadIdx.x];
         }
         __syncthreads();
 
         if (j < width) {
             #pragma unroll
             for(int i_local = 0; i_local < CHUNK_SIZE; ++i_local) {
-                const int i = i_chunk + i_local;
-                
-                const int cEntryOld = __any_sync(dim_mask, B_k && (A_block[i_local][k] > 0.5f)) ? 1 : 0;
-                const int cEntryNew = __any_sync(dim_mask, B_k_changed && (A_block[i_local][k] > 0.5f)) ? 1 : 0;
+                const bool A_i_k = A_block[i_local][k] > 0.5f;
+                const int cEntryOld = __any_sync(dim_mask, A_i_k && B_j_k) ? 1 : 0;
+                const int cEntryNew = __any_sync(dim_mask, A_i_k && B_j_k_changed) ? 1 : 0;
 
-                const int intLane = i % 32;
-                const int cTruthEntry = (C_block[warpIdIntern] >> (32 - intLane - 1)) & 1; 
+                const int i = i_chunk + i_local;
+                const int vecLane = i % 32;
+                const int shift = (32 - vecLane - 1);
+                const int cTruthEntry = (C_block[warpIdIntern] >> shift) & 1; 
 
                 error_warp += (cEntryNew ^ cTruthEntry) - (cEntryOld ^ cTruthEntry);
             }
@@ -578,16 +621,18 @@ vectorMatrixMultCompareColWarpShared(const float * __restrict__ A,
     }
     // each thread now has total error of warp
 
-    if (colToBeChanged < height) {
+    if (j < height) {
         // Metropolis–Hastings algorithm
         if (metro(&state, error_warp, temperature)) {
-            B[colToBeChanged * warpSize + warpLane] = currentCol_k_changed;
+            B[j * warpSize + k] = B_j_k_float_changed;
             // only one thread updates the global error
             if (warpLane == 0)
                 atomicAdd(global_error, error_warp);
         }
     }
 }
+
+
 
 template<typename factor_t = uint32_t>
 class CuBin

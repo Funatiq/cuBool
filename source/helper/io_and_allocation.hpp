@@ -341,4 +341,61 @@ void initializeFactors( vector<float> &A, vector<float> &B,
     printf("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
 }
 
+// Initialization of A and B
+void initializeFactors2( vector<float> &A, vector<float> &B, 
+                        int height, int width,
+                        float density, fast_kiss_state32_t *state,
+                        int padded_height = 0, int padded_width = 0)
+{
+    if (padded_height == 0)
+        padded_height = height;
+    if (padded_width == 0)
+        padded_width = width;
+
+    A.clear();
+    A.resize(padded_height * DIM_PARAM, 0);
+    B.clear();
+    B.resize(padded_width * DIM_PARAM, 0);
+
+    // Initialize A and B and copy to device
+    bool threshold;
+    for (int i = 0; i < height; i++) {
+        #pragma unroll
+        for (int j = 0; j < DIM_PARAM; j++) {
+            switch(INITIALIZATIONMODE) {
+                case 1: threshold = (fast_kiss32(state) / (double) UINT32_MAX) 
+                                        < (sqrt(1 - pow(1 - density, 1 / (double) DIM_PARAM)));
+                                        break;
+                case 2: threshold = (fast_kiss32(state) / (double) UINT32_MAX) 
+                                        < (density / (double) 100);
+                                        break;
+                case 3: threshold = (fast_kiss32(state) / (double) UINT32_MAX) 
+                                        < density;
+                                        break;
+            }
+            A[i * DIM_PARAM + j] = threshold;
+        }
+    }
+
+    for (int i = 0; i < width; i++) {
+        #pragma unroll
+        for (int j = 0; j < DIM_PARAM; j++) {
+            switch(INITIALIZATIONMODE) {
+                case 1: threshold = (fast_kiss32(state) / (double) UINT32_MAX) 
+                                        < (sqrt(1 - pow(1 - density, 1 / (double) DIM_PARAM)));
+                                        break;
+                case 2: threshold = (fast_kiss32(state) / (double) UINT32_MAX) 
+                                        < (density / (double) 100);
+                                        break;
+                case 3: threshold = (fast_kiss32(state) / (double) UINT32_MAX) 
+                                        < density;
+                                        break;
+            }
+            B[i * DIM_PARAM + j] = threshold;
+        }
+    }
+    
+    printf("Initialization of A and B complete\n");
+    printf("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
+}
 #endif
