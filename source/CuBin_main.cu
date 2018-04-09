@@ -27,6 +27,7 @@ int main(int argc, char **argv) {
 
     CuBin<my_bit_vector_t>::CuBin_config config;
     config.verbosity = args.get<size_t>({"v","verbosity"}, config.verbosity);
+    uint8_t factorDim = args.get<uint8_t>({"k","dim","dimension","factordim"}, 20);
     config.linesAtOnce = args.get<size_t>({"l","lines","linesperkernel"}, config.linesAtOnce);
     config.maxIterations = args.get<size_t>({"i","iter","iterations"}, config.maxIterations);
     config.distanceThreshold = args.get<int>({"e","d","threshold"}, config.distanceThreshold);
@@ -41,6 +42,7 @@ int main(int argc, char **argv) {
     config.flipManyDepth = args.get<uint32_t>({"fd","depth","flipdepth","flipmanydepth"}, config.flipManyDepth);
 
      cout << "verbosity " << config.verbosity << "\n"
+        << "factorDim " << (int)factorDim << "\n"
         << "maxIterations " << config.maxIterations << "\n"
         << "linesAtOnce " << config.linesAtOnce << "\n"
         << "distanceThreshold " << config.distanceThreshold << "\n"
@@ -77,7 +79,7 @@ int main(int argc, char **argv) {
         width = 5000;
         // height = 5*1024;
         // width = 5*1024;
-        generate_random_matrix(height, width, 3, A0_vec, B0_vec, C0_vec, density);
+        generate_random_matrix(height, width, factorDim, 3, A0_vec, B0_vec, C0_vec, density);
     } else {
         printf("Wrong data file\n");
         return 0;
@@ -85,13 +87,11 @@ int main(int argc, char **argv) {
 
     // Initialize Ab, Bb bitvector matrices
     vector<my_bit_vector_t> A_vec, B_vec;
-    initializeFactors(A_vec, B_vec, height, width, density, &state);
+    initializeFactors(A_vec, B_vec, height, width, factorDim, density, &state);
 
     // copy matrices to GPU and run optimization
-    auto cubin = CuBin<my_bit_vector_t>(A_vec, B_vec, C0_vec);
+    auto cubin = CuBin<my_bit_vector_t>(A_vec, B_vec, C0_vec, factorDim);
     int distance = cubin.getDistance();
-    cout << "Start distance: " << (float) distance / (height*width)
-         << " = " << distance << " elements" << endl;
     TIMERSTART(GPUKERNELLOOP)
     cubin.run(config);
     TIMERSTOP(GPUKERNELLOOP)

@@ -12,40 +12,35 @@
 
 // uint32_t vector masks --------------------------------------------------------
 __inline__ __device__
-uint32_t get_flip_mask_many(fast_kiss_state32_t * state, const uint32_t rand_depth) {
+uint32_t get_flip_mask_many(const uint8_t factorDim, fast_kiss_state32_t * state, const uint32_t rand_depth) {
     uint32_t bit_flip_mask = FULLMASK;
     #pragma unroll
     for(int i = 0; i < rand_depth; ++i) {
         bit_flip_mask &= fast_kiss32(state);
     }
-    bit_flip_mask &= FULLMASK << (32-DIM_PARAM);
+    bit_flip_mask &= FULLMASK << (32-factorDim);
     return bit_flip_mask;
 }
 
 __inline__ __device__
-uint32_t get_flip_mask_11(fast_kiss_state32_t * state) {
-    uint32_t bit_flip_mask = 0;
-    const uint32_t randomNumber = fast_kiss32(state);
-    #pragma unroll
-    for (int i = 0; i < DIM_PARAM; i++) {
-        bit_flip_mask |= (randomNumber >> i) & 11 ? (0 << 32 - 1 - i) : (1 << 32 - 1 - i);
-    }
-    return bit_flip_mask;
+uint32_t get_flip_mask_all(const uint8_t factorDim) {
+    return FULLMASK << (32-factorDim);
 }
 
 __inline__ __device__
-uint32_t get_flip_mask_one(fast_kiss_state32_t * state) {
-    const uint32_t lane = fast_kiss32(state) % DIM_PARAM;
+uint32_t get_flip_mask_one(const uint8_t factorDim, fast_kiss_state32_t * state) {
+    const uint32_t lane = fast_kiss32(state) % factorDim;
     return 1 << (32 - 1 - lane);
 }
 
 __inline__ __device__
-uint32_t get_flip_mask(fast_kiss_state32_t * state,
+uint32_t get_flip_mask(const uint8_t factorDim, fast_kiss_state32_t * state,
                        const float flipManyChance,
                        const uint32_t flipManyDepth) {
     const float random_many = fast_kiss32(state) / (float) UINT32_MAX;
 
-    return random_many < flipManyChance ? get_flip_mask_many(state, flipManyDepth) : get_flip_mask_one(state);
+    return random_many < flipManyChance ? get_flip_mask_many(factorDim, state, flipManyDepth) : get_flip_mask_one(factorDim, state);
+    // return random_many < flipManyChance ? get_flip_mask_all() : get_flip_mask_one(state);
 }
 
 // float updates ---------------------------------------------------------------
@@ -55,19 +50,19 @@ float get_float_update_many(fast_kiss_state32_t * state) {
 }
 
 __inline__ __device__
-float get_float_update_one(fast_kiss_state32_t * state) {
-    const uint32_t lane = fast_kiss32(state) % DIM_PARAM;
+float get_float_update_one(const uint8_t factorDim, fast_kiss_state32_t * state) {
+    const uint32_t lane = fast_kiss32(state) % factorDim;
     return threadIdx.x % warpSize == lane ? 0.1f : 0.0f;
 }
 
 __inline__ __device__
-float get_float_update(fast_kiss_state32_t * state, const float flipManyChance) {
+float get_float_update(const uint8_t factorDim, fast_kiss_state32_t * state, const float flipManyChance) {
     const float random_many = fast_kiss32(state) / (float) UINT32_MAX;
-    float update = random_many < flipManyChance ? get_float_update_many(state) : get_float_update_one(state);
+    float update = random_many < flipManyChance ? get_float_update_many(state) : get_float_update_one(factorDim, state);
 
     const float random_factor = fast_kiss32(state) / (float) UINT32_MAX;
-    // update = random_factor < 0.5f ? 5*update : update;
-    update = random_factor < 1.0f ? 5*update : update;
+    update = random_factor < 0.5f ? 5*update : update;
+    // update = 10*update;
 
     const float random_sign = fast_kiss32(state) / (float) UINT32_MAX;
     return random_sign < 0.5f ? update : -1.0*update;
@@ -75,13 +70,13 @@ float get_float_update(fast_kiss_state32_t * state, const float flipManyChance) 
 
 // Metropolis–Hastings algorithm
 __inline__ __device__
-bool metro(fast_kiss_state32_t * state, const int error, const float temperature) {
+bool metro(fast_kiss_state32_t * state, const int error, const float temperature, const int error_max) {
     if(error < 0)
         return true;
     if(temperature <= 0)
         return false;
     const float randomNumber = fast_kiss32(state) / (float) UINT32_MAX;
-    const float metro = fminf(1.0f, expf((float) - error / temperature));
+    const float metro = fminf(1.0f, expf((float) - error / error_max / temperature));
     return randomNumber < metro;
 }
 
@@ -92,6 +87,7 @@ void computeFullDistance(const uint32_t * __restrict__ Ab,
                          const uint32_t * __restrict__ Cb, 
                          const int height, const int width,
                          const int padded_width,
+                         const uint8_t factorDim,
                          int *distance_test)
 {
     const int warpId = (threadIdx.x + blockIdx.x * blockDim.x) / warpSize;
@@ -125,6 +121,7 @@ void computeFullDistance(const float * __restrict__ A,
                          const uint32_t * __restrict__ Cb, 
                          const int height, const int width,
                          const int padded_width,
+                         const uint8_t factorDim,
                          int *distance_test)
 {
     // const int warpId = (threadIdx.x + blockIdx.x * blockDim.x) / warpSize;
@@ -137,7 +134,7 @@ void computeFullDistance(const float * __restrict__ A,
     __shared__ float B_block[CHUNK_SIZE][32];
     __shared__ uint32_t C_block[CHUNK_SIZE];
 
-    const uint32_t dim_mask = FULLMASK >> (32 - DIM_PARAM);
+    const uint32_t dim_mask = FULLMASK >> (32 - factorDim);
     
     const int i = warpId;
     const int k = warpLane;
@@ -195,6 +192,7 @@ void computeFullDistance2(const float * __restrict__ A,
                          const uint32_t * __restrict__ Cb, 
                          const int height, const int width,
                          const int padded_width,
+                         const uint8_t factorDim,
                          int *distance_test)
 {
     // const int warpId = (threadIdx.x + blockIdx.x * blockDim.x) / warpSize;
@@ -208,7 +206,7 @@ void computeFullDistance2(const float * __restrict__ A,
     __shared__ float A_block[CHUNK_SIZE][32];
     __shared__ uint32_t C_block[WARPSPERBLOCK];
 
-    const uint32_t dim_mask = FULLMASK >> (32 - DIM_PARAM);
+    const uint32_t dim_mask = FULLMASK >> (32 - factorDim);
 
     const int j = warpId;
     const int k = warpLane;
@@ -271,6 +269,7 @@ vectorMatrixMultCompareRowWarpShared(bit_vector_t *A,
                                      const int height,
                                      const int width,
                                      const int padded_width,
+                                     const uint8_t factorDim,
                                      const int startrow,
                                      int *global_error,
                                      const uint32_t seed, 
@@ -297,7 +296,7 @@ vectorMatrixMultCompareRowWarpShared(bit_vector_t *A,
     if (i < height) {
         state = get_initial_fast_kiss_state32(seed + warpId);
 
-        A_i_changed = A_i ^ get_flip_mask(&state, flipManyChance, flipDepth);
+        A_i_changed = A_i ^ get_flip_mask(factorDim, &state, flipManyChance, flipDepth);
     }
     // A_i_changed = __shfl_sync(FULLMASK, A_i_changed, 0);
     
@@ -339,7 +338,7 @@ vectorMatrixMultCompareRowWarpShared(bit_vector_t *A,
         if (warpLane == 0) {
         // if (i < height && warpLane == 0) {
             // Metropolis–Hastings algorithm
-            if (metro(&state, error_warp, temperature)) {
+            if (metro(&state, error_warp, temperature, width)) {
                 A[i] = A_i_changed;
                 atomicAdd(global_error, error_warp);
             }
@@ -356,6 +355,7 @@ vectorMatrixMultCompareColWarpShared(const bit_vector_t * __restrict__ A,
                                      const int height,
                                      const int width,
                                      const int padded_width,
+                                     const uint8_t factorDim,
                                      const int startcol,
                                      int *global_error,
                                      const uint32_t seed,
@@ -386,7 +386,7 @@ vectorMatrixMultCompareColWarpShared(const bit_vector_t * __restrict__ A,
     if (j < width) {
         state = get_initial_fast_kiss_state32(seed + warpId);
 
-        B_j_changed = B_j ^ get_flip_mask(&state, flipManyChance, flipManyDepth);
+        B_j_changed = B_j ^ get_flip_mask(factorDim, &state, flipManyChance, flipManyDepth);
     }
     // B_j_changed = __shfl_sync(FULLMASK, B_j_changed, 0);
     
@@ -445,7 +445,7 @@ vectorMatrixMultCompareColWarpShared(const bit_vector_t * __restrict__ A,
         if (warpLane == 0) {
         // if (j < width && warpLane == 0) {
             // Metropolis–Hastings algorithm
-            if (metro(&state, error_warp, temperature)) {
+            if (metro(&state, error_warp, temperature, height)) {
                 B[j] = B_j_changed;
                 atomicAdd(global_error, error_warp);
             }
@@ -462,6 +462,7 @@ vectorMatrixMultCompareRowWarpShared(float *A,
                                      const int height,
                                      const int width,
                                      const int padded_width,
+                                     const uint8_t factorDim,
                                      const int startrow,
                                      int *global_error,
                                      const uint32_t seed, 
@@ -477,7 +478,7 @@ vectorMatrixMultCompareRowWarpShared(float *A,
     __shared__ float B_block[CHUNK_SIZE][32];
     __shared__ uint32_t C_block[CHUNK_SIZE];
 
-    const uint32_t dim_mask = FULLMASK >> (32 - DIM_PARAM);
+    const uint32_t dim_mask = FULLMASK >> (32 - factorDim);
 
     fast_kiss_state32_t state;
 
@@ -490,7 +491,7 @@ vectorMatrixMultCompareRowWarpShared(float *A,
     if (i < height) {
         state = get_initial_fast_kiss_state32(seed + warpId);
 
-        A_i_k_float_changed += get_float_update(&state, flipManyChance);
+        A_i_k_float_changed += get_float_update(factorDim, &state, flipManyChance);
         A_i_k_float_changed = A_i_k_float_changed > 1.0f ? 1.0f : A_i_k_float_changed;
         A_i_k_float_changed = A_i_k_float_changed < 0.0f ? 0.0f : A_i_k_float_changed;
     }
@@ -532,7 +533,7 @@ vectorMatrixMultCompareRowWarpShared(float *A,
 
     if (i < height) {
         // Metropolis–Hastings algorithm
-        if (metro(&state, error_warp, temperature)) {
+        if (metro(&state, error_warp, temperature, width)) {
             A[i * warpSize + k] = A_i_k_float_changed;
             // only one thread updates the global error
             if (warpLane == 0)
@@ -550,6 +551,7 @@ vectorMatrixMultCompareColWarpShared(const float * __restrict__ A,
                                      const int height,
                                      const int width,
                                      const int padded_width,
+                                     const uint8_t factorDim,
                                      const int startcol,
                                      int *global_error,
                                      const uint32_t seed,
@@ -566,7 +568,7 @@ vectorMatrixMultCompareColWarpShared(const float * __restrict__ A,
     __shared__ float A_block[CHUNK_SIZE][32];
     __shared__ uint32_t C_block[WARPSPERBLOCK];
 
-    const uint32_t dim_mask = FULLMASK >> (32 - DIM_PARAM);
+    const uint32_t dim_mask = FULLMASK >> (32 - factorDim);
 
     fast_kiss_state32_t state;
 
@@ -580,7 +582,7 @@ vectorMatrixMultCompareColWarpShared(const float * __restrict__ A,
     if (j < width) {
         state = get_initial_fast_kiss_state32(seed + warpId);
 
-        B_j_k_float_changed += get_float_update(&state, flipManyChance);
+        B_j_k_float_changed += get_float_update(factorDim, &state, flipManyChance);
         B_j_k_float_changed = B_j_k_float_changed > 1.0f ? 1.0f : B_j_k_float_changed;
         B_j_k_float_changed = B_j_k_float_changed < 0.0f ? 0.0f : B_j_k_float_changed;
     }
@@ -626,7 +628,7 @@ vectorMatrixMultCompareColWarpShared(const float * __restrict__ A,
 
     if (j < width) {
         // Metropolis–Hastings algorithm
-        if (metro(&state, error_warp, temperature)) {
+        if (metro(&state, error_warp, temperature, height)) {
             B[j * warpSize + k] = B_j_k_float_changed;
             // only one thread updates the global error
             if (warpLane == 0)
@@ -645,12 +647,18 @@ class CuBin
     using bit_matrix_t = std::vector<bit_vector_t>;
 
 public:
-    CuBin(const factor_matrix_t& A, const factor_matrix_t& B, const bit_matrix_t& C) {
+    CuBin(const factor_matrix_t& A, const factor_matrix_t& B, const bit_matrix_t& C, const uint8_t factorDim = 20) {
         int device_id = 0;
         cudaDeviceProp prop;
         cudaGetDeviceProperties(&prop, device_id);
 
-        max_parallel_lines = prop.multiProcessorCount * WARPSPERBLOCK;
+        max_parallel_lines_ = prop.multiProcessorCount * WARPSPERBLOCK;
+
+        if(factorDim > 32) {
+            std::cerr << "Factor dimension too big! Maximum is 32." << endl;
+            factorDim_ = 32;
+        }
+        else factorDim_ = factorDim;
 
         initialize(A, B, C);
     }
@@ -661,72 +669,80 @@ public:
 
     bool initialize(const factor_matrix_t& A, const factor_matrix_t& B, const bit_matrix_t& C) {
         if(std::is_same<factor_t, uint32_t>::value) {
-            lineSize = 1;
-            lineSizePadded = 1;
+            lineSize_ = 1;
+            lineSize_padded_ = 1;
         }
         if(std::is_same<factor_t, float>::value) {
-            lineSize = DIM_PARAM;
-            lineSizePadded = 32;
+            lineSize_ = factorDim_;
+            lineSize_padded_ = 32;
         }
 
-        if( SDIV(A.size()/lineSize,32) * B.size()/lineSize != C.size()) {
+        if( SDIV(A.size()/lineSize_,32) * B.size()/lineSize_ != C.size()) {
             std::cerr << "CuBin construction: Matrix dimension mismatch." << std::endl;
             return false;
         }
 
-        if(initialized) {
-            std::cout << "CuBin already initialized. Please clear CuBin before reinitialization." << std::endl;
+        if(initialized_) {
+            std::cerr << "CuBin already initialized. Please clear CuBin before reinitialization." << std::endl;
             return false;
         }
 
-        size_t lineBytes = sizeof(factor_t) * lineSize;
-        size_t lineBytes_padded = sizeof(factor_t) * lineSizePadded;
+        size_t lineBytes = sizeof(factor_t) * lineSize_;
+        size_t lineBytes_padded = sizeof(factor_t) * lineSize_padded_;
 
-        height = A.size() / lineSize;
-        // size_t height_padded = SDIV(height, WARPSPERBLOCK) * WARPSPERBLOCK;
-        cudaMalloc(&d_A, lineBytes_padded * height); CUERR
+        height_ = A.size() / lineSize_;
+        // size_t height__padded = SDIV(height_, WARPSPERBLOCK) * WARPSPERBLOCK;
+        cudaMalloc(&d_A, lineBytes_padded * height_); CUERR
 
-        width = B.size() / lineSize;
-        // size_t width_padded = SDIV(width, WARPSPERBLOCK) * WARPSPERBLOCK;
-        cudaMalloc(&d_B, lineBytes_padded * width); CUERR
+        width_ = B.size() / lineSize_;
+        // size_t width_padded = SDIV(width_, WARPSPERBLOCK) * WARPSPERBLOCK;
+        cudaMalloc(&d_B, lineBytes_padded * width_); CUERR
         
-        size_t height_C = SDIV(height, 32);
-        width_C_padded = SDIV(width, 32) * 32;
-        cudaMalloc(&d_C, sizeof(bit_vector_t) * height_C * width_C_padded); CUERR
+        size_t height__C = SDIV(height_, 32);
+        width_C_padded_ = SDIV(width_, 32) * 32;
+        cudaMalloc(&d_C, sizeof(bit_vector_t) * height__C * width_C_padded_); CUERR
 
         cudaMemcpy2D(d_A, lineBytes_padded,
                      A.data(), lineBytes,
                      lineBytes,
-                     height,
+                     height_,
                      cudaMemcpyHostToDevice); CUERR
         cudaMemcpy2D(d_B, lineBytes_padded,
                      B.data(), lineBytes,
                      lineBytes,
-                     width,
+                     width_,
                      cudaMemcpyHostToDevice); CUERR
-        cudaMemcpy2D(d_C, sizeof(bit_vector_t) * width_C_padded,
-                     C.data(), sizeof(bit_vector_t) * width,
-                     sizeof(bit_vector_t) * width,
-                     height_C,
+        cudaMemcpy2D(d_C, sizeof(bit_vector_t) * width_C_padded_,
+                     C.data(), sizeof(bit_vector_t) * width_,
+                     sizeof(bit_vector_t) * width_,
+                     height__C,
                      cudaMemcpyHostToDevice); CUERR
 
 
-        cudaMallocHost(&distance, sizeof(int)); CUERR
-        cudaMalloc(&d_distance, sizeof(int)); CUERR
-        cudaMemset(d_distance, 0, sizeof(int)); CUERR
+        cudaMallocHost(&distance_, sizeof(int)); CUERR
+        cudaMalloc(&d_distance_, sizeof(int)); CUERR
+        cudaMemset(d_distance_, 0, sizeof(int)); CUERR
 
-        computeFullDistance <<< SDIV(width, WARPSPERBLOCK), WARPSPERBLOCK*32 >>>
-                        (d_A, d_B, d_C, height, width, width_C_padded, d_distance);
+        computeFullDistance <<< SDIV(width_, WARPSPERBLOCK), WARPSPERBLOCK*32 >>>
+                        (d_A, d_B, d_C, height_, width_, width_C_padded_, factorDim_, d_distance_);
 
         cudaDeviceSynchronize(); CUERR
 
-        cudaMemcpy(distance, d_distance, sizeof(int), cudaMemcpyDeviceToHost); CUERR
+        cudaMemcpy(distance_, d_distance_, sizeof(int), cudaMemcpyDeviceToHost); CUERR
 
-        return initialized = true;
+        std::cout << "CuBin initialization complete." << endl;
+
+        std::cout << "Matrix dimensions:\t" << height_ << "x" << width_ << endl;
+        std::cout << "Factor dimension:\t" << (int) factorDim_ << endl;
+
+        std::cout << "Start distance: " << (float) *distance_ / (height_*width_)
+                  << " = " << distance_ << " elements" << endl;
+
+        return initialized_ = true;
     }
 
     bool verifyDistance() {
-        if(!initialized) {
+        if(!initialized_) {
             std::cerr << "CuBin not initialized." << endl;
             return false;
         }
@@ -738,17 +754,17 @@ public:
         cudaMalloc(&d_distance_proof, sizeof(int)); CUERR
         cudaMemset(d_distance_proof, 0, sizeof(int)); CUERR
 
-        computeFullDistance <<< SDIV(width, WARPSPERBLOCK), WARPSPERBLOCK*32 >>>
-                        (d_A, d_B, d_C, height, width, width_C_padded, d_distance_proof);
+        computeFullDistance <<< SDIV(width_, WARPSPERBLOCK), WARPSPERBLOCK*32 >>>
+                        (d_A, d_B, d_C, height_, width_, width_C_padded_, factorDim_, d_distance_proof);
 
         cudaDeviceSynchronize(); CUERR
 
         cudaMemcpy(distance_proof, d_distance_proof, sizeof(int), cudaMemcpyDeviceToHost); CUERR
 
-        bool equal = *distance == *distance_proof;
+        bool equal = *distance_ == *distance_proof;
         if(!equal) {
             std::cout << "----- !Distances differ! -----\n";
-            std::cout << "Running distance:  " << *distance << "\n";
+            std::cout << "Running distance:  " << *distance_ << "\n";
             std::cout << "Real distance:     " << *distance_proof << std::endl;
         }
 
@@ -758,56 +774,47 @@ public:
     } 
 
     void clear() {
-        if(initialized) {
+        if(initialized_) {
             cudaFree(d_A);
             cudaFree(d_B);
             cudaFree(d_C);
-            cudaFreeHost(distance);
-            cudaFree(d_distance);
-            initialized = false;
+            cudaFreeHost(distance_);
+            cudaFree(d_distance_);
+            initialized_ = false;
         }
     }
 
     void getFactors(factor_matrix_t& A, factor_matrix_t& B) {
-        if(!initialized) {
+        if(!initialized_) {
             std::cerr << "CuBin not initialized." << endl;
             return;
         }
 
-        if(std::is_same<factor_t, uint32_t>::value) {
-            lineSize = 1;
-            lineSizePadded = 1;
-        }
-        if(std::is_same<factor_t, float>::value) {
-            lineSize = DIM_PARAM;
-            lineSizePadded = 32;
-        }
+        size_t lineBytes = sizeof(factor_t) * lineSize_;
+        size_t lineBytes_padded = sizeof(factor_t) * lineSize_padded_;
 
-        size_t lineBytes = sizeof(factor_t) * lineSize;
-        size_t lineBytes_padded = sizeof(factor_t) * lineSizePadded;
-
-        A.resize(height);
+        A.resize(height_);
         cudaMemcpy2D(A.data(), lineBytes,
                      d_A, lineBytes_padded,
                      lineBytes,
-                     height,
+                     height_,
                      cudaMemcpyHostToDevice); CUERR
         
-        B.resize(width);
+        B.resize(width_);
         cudaMemcpy2D(B.data(), lineBytes,
                      d_B, lineBytes_padded,
                      lineBytes,
-                     width,
+                     width_,
                      cudaMemcpyHostToDevice); CUERR
     }
 
     int getDistance() {
-        if(!initialized) {
+        if(!initialized_) {
             std::cerr << "CuBin not initialized." << endl;
             return -1;
         }
-        cudaMemcpy(distance, d_distance, sizeof(int), cudaMemcpyDeviceToHost); CUERR
-        return *distance;
+        cudaMemcpy(distance_, d_distance_, sizeof(int), cudaMemcpyDeviceToHost); CUERR
+        return *distance_;
     }
 
     struct CuBin_config {
@@ -827,15 +834,15 @@ public:
     };
 
     void run(const CuBin_config& config) {
-        if(!initialized) {
+        if(!initialized_) {
             std::cerr << "CuBin not initialized." << endl;
             return;
         }
 
         size_t linesAtOnce = config.linesAtOnce;
         if(config.loadBalance) {
-            linesAtOnce = linesAtOnce / max_parallel_lines * max_parallel_lines;
-            if (!linesAtOnce) linesAtOnce = max_parallel_lines;
+            linesAtOnce = linesAtOnce / max_parallel_lines_ * max_parallel_lines_;
+            if (!linesAtOnce) linesAtOnce = max_parallel_lines_;
         }
 
         if(config.verbosity > 0) {
@@ -859,29 +866,29 @@ public:
         fast_kiss_state32_t state = get_initial_fast_kiss_state32(config.seed);
         float temperature = config.tempStart;
         size_t iteration = 0;
-        while( *distance > config.distanceThreshold
+        while( *distance_ > config.distanceThreshold
                 && iteration++ < config.maxIterations
                 && temperature > config.tempEnd) {
 
             // Change rows
-            int lineToBeChanged = (fast_kiss32(&state) % height) / WARPSPERBLOCK * WARPSPERBLOCK;
+            int lineToBeChanged = (fast_kiss32(&state) % height_) / WARPSPERBLOCK * WARPSPERBLOCK;
             uint32_t gpuSeed = fast_kiss32(&state) + iteration;
 
             vectorMatrixMultCompareRowWarpShared 
-                <<< SDIV(min(linesAtOnce, height), WARPSPERBLOCK), WARPSPERBLOCK*32 >>>
-                (d_A, d_B, d_C, height, width, width_C_padded,
-                 lineToBeChanged, d_distance, gpuSeed, temperature, config.flipManyChance, config.flipManyDepth);
+                <<< SDIV(min(linesAtOnce, height_), WARPSPERBLOCK), WARPSPERBLOCK*32 >>>
+                (d_A, d_B, d_C, height_, width_, width_C_padded_, factorDim_,
+                 lineToBeChanged, d_distance_, gpuSeed, temperature/10, config.flipManyChance, config.flipManyDepth);
 
             cudaDeviceSynchronize(); CUERR
 
             // Change cols
-            lineToBeChanged = (fast_kiss32(&state) % width) / WARPSPERBLOCK * WARPSPERBLOCK;
+            lineToBeChanged = (fast_kiss32(&state) % width_) / WARPSPERBLOCK * WARPSPERBLOCK;
             gpuSeed = fast_kiss32(&state) + iteration;
 
             vectorMatrixMultCompareColWarpShared 
-                <<< SDIV(min(linesAtOnce, width), WARPSPERBLOCK), WARPSPERBLOCK*32 >>>
-                (d_A, d_B, d_C, height, width, width_C_padded,
-                 lineToBeChanged, d_distance, gpuSeed, temperature, config.flipManyChance, config.flipManyDepth);
+                <<< SDIV(min(linesAtOnce, width_), WARPSPERBLOCK), WARPSPERBLOCK*32 >>>
+                (d_A, d_B, d_C, height_, width_, width_C_padded_, factorDim_,
+                 lineToBeChanged, d_distance_, gpuSeed, temperature/10, config.flipManyChance, config.flipManyDepth);
 
             cudaDeviceSynchronize(); CUERR
 
@@ -889,8 +896,10 @@ public:
 
             if(config.verbosity > 0 && iteration % config.distanceShowEvery == 0) {
                 std::cout << "Iteration: " << iteration 
-                          << " \tCurrent distance: " << (float) *distance / (height*width)
-                          << " = " << *distance << " elements" << std::endl;
+                          << " \tCurrent distance: " << (float) *distance_ / (height_*width_)
+                          << " = " << *distance_ << " elements" << std::endl;
+                if(config.verbosity < 2)
+                    std::cout << "Iteration: " << iteration << " \tTemperature: " << temperature << std::endl;
             }
             if(iteration % config.tempReduceEvery == 0) {
                 temperature *= config.tempFactor;
@@ -902,33 +911,34 @@ public:
         if(config.verbosity > 0) {
             if (!(iteration < config.maxIterations))
                 std::cout << "Reached iteration limit: " << config.maxIterations << std::endl;
-            if (!(*distance > config.distanceThreshold))
+            if (!(*distance_ > config.distanceThreshold))
                 std::cout << "Distance below threshold." << std::endl;
             if (!(temperature > config.tempEnd))
                 std::cout << "Temperature below threshold." << std::endl;
         }
         std::cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n";
-        std::cout << "Final distance: " << (float) *distance / (height * width)
-                  << " = " << *distance << " elements" << std::endl;
+        std::cout << "Final distance_: " << (float) *distance_ / (height_ * width_)
+                  << " = " << *distance_ << " elements" << std::endl;
     }  
 
 private:
-    bool initialized = false;
-    factor_matrix_t A;
-    factor_matrix_t B;
-    bit_matrix_t C;
+    bool initialized_ = false;
+    // factor_matrix_t A;
+    // factor_matrix_t B;
+    // bit_matrix_st C;
     factor_t *d_A;
     factor_t *d_B;
     bit_vector_t *d_C;
-    int *distance;
-    int *d_distance;
+    int *distance_;
+    int *d_distance_;
     // size_t height_padded;
-    size_t height = 0;
-    size_t width = 0;
-    size_t width_C_padded = 0;
-    size_t lineSize = 1;
-    size_t lineSizePadded = 1;
-    int max_parallel_lines;
+    uint8_t factorDim_ = 20;
+    size_t height_ = 0;
+    size_t width_ = 0;
+    size_t width_C_padded_ = 0;
+    size_t lineSize_ = 1;
+    size_t lineSize_padded_ = 1;
+    int max_parallel_lines_;
 };
 
 #endif

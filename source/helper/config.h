@@ -7,9 +7,9 @@
 #ifndef WARPSPERBLOCK
 #define WARPSPERBLOCK 16
 #endif
-#ifndef DIM_PARAM
-#define DIM_PARAM 20
-#endif
+// #ifndef DIM_PARAM
+// #define DIM_PARAM 20
+// #endif
 #ifndef CPUITERATIONS
 #define CPUITERATIONS 100000000
 #endif

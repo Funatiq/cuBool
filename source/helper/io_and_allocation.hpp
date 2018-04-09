@@ -17,11 +17,11 @@
 
 using namespace std;
 
-void generate_random_matrix(int height, int width, int num_kiss, 
+void generate_random_matrix(const int height, const int width, const uint8_t factorDim, const int num_kiss, 
                             vector<uint32_t> &Ab, vector<uint32_t> &Bb, vector<uint32_t> &C0b,
                             float &density)
 {
-    uint32_t bit_vector_mask = uint32_t(~0) << (32-DIM_PARAM);
+    uint32_t bit_vector_mask = uint32_t(~0) << (32-factorDim);
 
     Ab.clear();
     Ab.resize(height, bit_vector_mask);
@@ -76,16 +76,16 @@ void generate_random_matrix(int height, int width, int num_kiss,
     printf("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
 }
 
-void generate_random_matrix(int height, int width, int num_kiss, 
+void generate_random_matrix(const int height, const int width, const uint8_t factorDim, const int num_kiss, 
                             vector<float> &A, vector<float> &B, vector<uint32_t> &C0b,
                             float &density)
 {
-    uint32_t bit_vector_mask = uint32_t(~0) << (32-DIM_PARAM);
+    uint32_t bit_vector_mask = uint32_t(~0) << (32-factorDim);
     
     A.clear();
-    A.resize(height * DIM_PARAM, 0);
+    A.resize(height * factorDim, 0);
     B.clear();
-    B.resize(width * DIM_PARAM, 0);
+    B.resize(width * factorDim, 0);
 
     uint32_t seed = 42;
     fast_kiss_state32_t state = get_initial_fast_kiss_state32(seed);
@@ -94,26 +94,26 @@ void generate_random_matrix(int height, int width, int num_kiss,
         uint32_t mask = bit_vector_mask;
         for(int kiss = 0; kiss < num_kiss; ++kiss)
             mask &= fast_kiss32(&state);
-        for(int k=0; k < DIM_PARAM; ++k)
-            A[i * DIM_PARAM + k] = (mask >> 32 - 1 - k) & 1 ? 1 : 0;
+        for(int k=0; k < factorDim; ++k)
+            A[i * factorDim + k] = (mask >> 32 - 1 - k) & 1 ? 1 : 0;
     }
     for(int j=0; j < width; ++j) {
         uint32_t mask = bit_vector_mask;
         for(int kiss = 0; kiss < num_kiss; ++kiss)
             mask &= fast_kiss32(&state);
-        for(int k=0; k < DIM_PARAM; ++k)
-            B[j * DIM_PARAM + k] = (mask >> 32 - 1 - k) & 1 ? 1 : 0;
+        for(int k=0; k < factorDim; ++k)
+            B[j * factorDim + k] = (mask >> 32 - 1 - k) & 1 ? 1 : 0;
     }
 
     // float threshold = 1.0f;
     // for(int kiss = 0; kiss < num_kiss; ++kiss)
     //     threshold /= 2.0f;
 
-    // for(int i=0; i < height * DIM_PARAM; ++i) {
+    // for(int i=0; i < height * factorDim; ++i) {
     //     float random = (float) fast_kiss32(&state) / UINT32_MAX;
     //     A[i] = random < threshold ? 1.0f : 0.0f;
     // }
-    // for(int j=0; j < width * DIM_PARAM; ++j) {
+    // for(int j=0; j < width * factorDim; ++j) {
     //     float random = (float) fast_kiss32(&state) / UINT32_MAX;
     //     B[i] = random < threshold ? 1.0f : 0.0f;
     // }
@@ -131,8 +131,8 @@ void generate_random_matrix(int height, int width, int num_kiss,
 
     for(int j=0; j < width; ++j) {
         for(int i=0; i < height; ++i) {
-            for (int k=0; k < DIM_PARAM; ++k) {
-                if((A[i * DIM_PARAM + k] > 0.5f) && (B[j * DIM_PARAM + k] > 0.5f)) {
+            for (int k=0; k < factorDim; ++k) {
+                if((A[i * factorDim + k] > 0.5f) && (B[j * factorDim + k] > 0.5f)) {
                     // int index = j*height+i;
                     int intId = i / 32 * width + j;
                     int intLane = i % 32;
@@ -211,7 +211,7 @@ bool endsWith(const string& s, const string& suffix) {
 }
 
 // Write result matrix in file
-void writeToFiles(uint32_t* Ab, uint32_t* Bb, int height, int width)
+void writeToFiles(const vector<uint32_t> &Ab, const vector<uint32_t> &Bb, const int height, const int width, const uint8_t factorDim)
 {
     time_t rawtime;
     struct tm * timeinfo;
@@ -228,20 +228,26 @@ void writeToFiles(uint32_t* Ab, uint32_t* Bb, int height, int width)
     
     ofstream myfile(a);
     if (myfile.is_open()){
-        myfile << height << " " << DIM_PARAM << "\n";
+        myfile << height << " " << factorDim << "\n";
         for (int i = 0; i < height; i++){
-            bitset<DIM_PARAM> row(Ab[i] >> (32 - DIM_PARAM));
-            myfile << row << "\n";
+            // bitset<32> row(Ab[i] >> (32 - factorDim));
+            // myfile << row << "\n";
+            for(int k=0; k < factorDim; ++k)
+                myfile << ((Ab[i] >> 32 - 1 - k) & 1 ? 1 : 0);
+            myfile << "\n";
         }
         myfile.close();
     }
     
     ofstream myfile2(b);
     if(myfile2.is_open()){
-        myfile2 << DIM_PARAM << " " << width << "\n";
-        for (int j = 0; j<DIM_PARAM; j++){
-            bitset<DIM_PARAM> col(Bb[j] >> (32 - DIM_PARAM));
-            myfile << col << "\n";
+        myfile2 << factorDim << " " << width << "\n";
+        for (int j = 0; j<factorDim; j++){
+            // bitset<32> col(Bb[j] >> (32 - factorDim));
+            // myfile2 << col << "\n";
+            for(int k=0; k < factorDim; ++k)
+                myfile2 << ((Bb[j] >> 32 - 1 - k) & 1 ? 1 : 0);
+            myfile2 << "\n";
         }
         myfile2.close();
     }   
@@ -250,8 +256,9 @@ void writeToFiles(uint32_t* Ab, uint32_t* Bb, int height, int width)
 
 // Initialization of A and B
 void initializeFactors( vector<uint32_t> &Ab, vector<uint32_t> &Bb, 
-                        int height, int width,
-                        float density, fast_kiss_state32_t *state,
+                        const int height, const int width,
+                        const uint8_t factorDim,
+                        const float density, fast_kiss_state32_t *state,
                         int padded_height = 0, int padded_width = 0)
 {
     if (padded_height == 0)
@@ -268,10 +275,10 @@ void initializeFactors( vector<uint32_t> &Ab, vector<uint32_t> &Bb,
     bool threshold;
     for (int i = 0; i < height; i++) {
         #pragma unroll
-        for (int j = 0; j < DIM_PARAM; j++) {
+        for (int j = 0; j < factorDim; j++) {
             switch(INITIALIZATIONMODE) {
                 case 1: threshold = (fast_kiss32(state) / (double) UINT32_MAX) 
-                                        < (sqrt(1 - pow(1 - density, 1 / (double) DIM_PARAM)));
+                                        < (sqrt(1 - pow(1 - density, 1 / (double) factorDim)));
                                         break;
                 case 2: threshold = (fast_kiss32(state) / (double) UINT32_MAX) 
                                         < (density / (double) 100);
@@ -286,10 +293,10 @@ void initializeFactors( vector<uint32_t> &Ab, vector<uint32_t> &Bb,
 
     for (int i = 0; i < width; i++) {
         #pragma unroll
-        for (int j = 0; j < DIM_PARAM; j++) {
+        for (int j = 0; j < factorDim; j++) {
             switch(INITIALIZATIONMODE) {
                 case 1: threshold = (fast_kiss32(state) / (double) UINT32_MAX) 
-                                        < (sqrt(1 - pow(1 - density, 1 / (double) DIM_PARAM)));
+                                        < (sqrt(1 - pow(1 - density, 1 / (double) factorDim)));
                                         break;
                 case 2: threshold = (fast_kiss32(state) / (double) UINT32_MAX) 
                                         < (density / (double) 100);
@@ -308,8 +315,9 @@ void initializeFactors( vector<uint32_t> &Ab, vector<uint32_t> &Bb,
 
 // Initialization of A and B
 void initializeFactors( vector<float> &A, vector<float> &B, 
-                        int height, int width,
-                        float density, fast_kiss_state32_t *state,
+                        const int height, const int width,
+                        const uint8_t factorDim,
+                        const float density, fast_kiss_state32_t *state,
                         int padded_height = 0, int padded_width = 0)
 {
     if (padded_height == 0)
@@ -318,22 +326,22 @@ void initializeFactors( vector<float> &A, vector<float> &B,
         padded_width = width;
 
     A.clear();
-    A.resize(padded_height * DIM_PARAM, 0);
+    A.resize(padded_height * factorDim, 0);
     B.clear();
-    B.resize(padded_width * DIM_PARAM, 0);
+    B.resize(padded_width * factorDim, 0);
 
     // Initialize A and B and copy to device
     for (int i = 0; i < height; i++) {
         #pragma unroll
-        for (int j = 0; j < DIM_PARAM; j++) {
-            A[i * DIM_PARAM + j] = (float) fast_kiss32(state) / UINT32_MAX;
+        for (int j = 0; j < factorDim; j++) {
+            A[i * factorDim + j] = (float) fast_kiss32(state) / UINT32_MAX;
         }
     }
 
     for (int i = 0; i < width; i++) {
         #pragma unroll
-        for (int j = 0; j < DIM_PARAM; j++) {
-            B[i * DIM_PARAM + j] = (float) fast_kiss32(state) / UINT32_MAX;
+        for (int j = 0; j < factorDim; j++) {
+            B[i * factorDim + j] = (float) fast_kiss32(state) / UINT32_MAX;
         }
     }
     
@@ -343,8 +351,9 @@ void initializeFactors( vector<float> &A, vector<float> &B,
 
 // Initialization of A and B
 void initializeFactors2( vector<float> &A, vector<float> &B, 
-                        int height, int width,
-                        float density, fast_kiss_state32_t *state,
+                        const int height, const int width,
+                        const uint8_t factorDim,
+                        const float density, fast_kiss_state32_t *state,
                         int padded_height = 0, int padded_width = 0)
 {
     if (padded_height == 0)
@@ -353,18 +362,18 @@ void initializeFactors2( vector<float> &A, vector<float> &B,
         padded_width = width;
 
     A.clear();
-    A.resize(padded_height * DIM_PARAM, 0);
+    A.resize(padded_height * factorDim, 0);
     B.clear();
-    B.resize(padded_width * DIM_PARAM, 0);
+    B.resize(padded_width * factorDim, 0);
 
     // Initialize A and B and copy to device
     bool threshold;
     for (int i = 0; i < height; i++) {
         #pragma unroll
-        for (int j = 0; j < DIM_PARAM; j++) {
+        for (int j = 0; j < factorDim; j++) {
             switch(INITIALIZATIONMODE) {
                 case 1: threshold = (fast_kiss32(state) / (double) UINT32_MAX) 
-                                        < (sqrt(1 - pow(1 - density, 1 / (double) DIM_PARAM)));
+                                        < (sqrt(1 - pow(1 - density, 1 / (double) factorDim)));
                                         break;
                 case 2: threshold = (fast_kiss32(state) / (double) UINT32_MAX) 
                                         < (density / (double) 100);
@@ -373,16 +382,16 @@ void initializeFactors2( vector<float> &A, vector<float> &B,
                                         < density;
                                         break;
             }
-            A[i * DIM_PARAM + j] = threshold;
+            A[i * factorDim + j] = threshold;
         }
     }
 
     for (int i = 0; i < width; i++) {
         #pragma unroll
-        for (int j = 0; j < DIM_PARAM; j++) {
+        for (int j = 0; j < factorDim; j++) {
             switch(INITIALIZATIONMODE) {
                 case 1: threshold = (fast_kiss32(state) / (double) UINT32_MAX) 
-                                        < (sqrt(1 - pow(1 - density, 1 / (double) DIM_PARAM)));
+                                        < (sqrt(1 - pow(1 - density, 1 / (double) factorDim)));
                                         break;
                 case 2: threshold = (fast_kiss32(state) / (double) UINT32_MAX) 
                                         < (density / (double) 100);
@@ -391,7 +400,7 @@ void initializeFactors2( vector<float> &A, vector<float> &B,
                                         < density;
                                         break;
             }
-            B[i * DIM_PARAM + j] = threshold;
+            B[i * factorDim + j] = threshold;
         }
     }
     
