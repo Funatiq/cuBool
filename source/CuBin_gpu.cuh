@@ -736,7 +736,7 @@ public:
         std::cout << "Factor dimension:\t" << (int) factorDim_ << endl;
 
         std::cout << "Start distance: " << (float) *distance_ / (height_*width_)
-                  << " = " << distance_ << " elements" << endl;
+                  << " = " << *distance_ << " elements" << endl;
 
         return initialized_ = true;
     }

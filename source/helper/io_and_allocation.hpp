@@ -57,10 +57,10 @@ void generate_random_matrix(const int height, const int width, const uint8_t fac
         for(int i=0; i < height; ++i) {
             if(Ab[i] & Bb[j]) {
                 // int index = j*height+i;
-                int intId = i / 32 * width + j;
-                int intLane = i % 32;
+                int vecId = i / 32 * width + j;
+                int vecLane = i % 32;
 
-                C0b[intId] |= 1 << (32 - 1 - intLane);
+                C0b[vecId] |= 1 << (32 - 1 - vecLane);
 
                 ++nonzeroelements;
             }
@@ -134,10 +134,10 @@ void generate_random_matrix(const int height, const int width, const uint8_t fac
             for (int k=0; k < factorDim; ++k) {
                 if((A[i * factorDim + k] > 0.5f) && (B[j * factorDim + k] > 0.5f)) {
                     // int index = j*height+i;
-                    int intId = i / 32 * width + j;
-                    int intLane = i % 32;
+                    int vecId = i / 32 * width + j;
+                    int vecLane = i % 32;
 
-                    C0b[intId] |= 1 << (32 - 1 - intLane);
+                    C0b[vecId] |= 1 << (32 - 1 - vecLane);
 
                     ++nonzeroelements;
                     break;
@@ -160,39 +160,27 @@ void readInputFileData(const string filename,
                        int &height, int &width, 
                        float &density)
 {
-    ifstream infile;
-    string linestring;
-    string field;
+    ifstream is {filename};
 
-    // First line: #height,#width,#non-zero-elements
-    infile.open(filename);
-    getline(infile, linestring);
-    stringstream sep(linestring);
-    getline(sep, field, ',');
-    height = stoi(field, nullptr);
-    getline(sep, field, ','); 
-    width = stoi(field, nullptr);
-    
-    // Malloc for C0b
+    if(!is.good()) throw std::runtime_error{"File " + filename +
+                                            " could not be opened!"};
+
+    std::uint64_t ones = 0;
+    is >> height >> width >> ones;
+
     int padded_height_32 = SDIV(height, 32);
     int sizeCb = padded_height_32 * width;
 
-    // C0b = (uint32_t *) malloc(sizeof(uint32_t) * sizeCb);
     C0b.clear();
     C0b.resize(sizeCb,0);
 
-    // Read rest of file
     int nonzeroelements = 0;
-    while (getline(infile, linestring)) {
-        stringstream sep1(linestring);
-        string fieldtemp;
-        getline(sep1, fieldtemp, ',');
-        int x = stoi(fieldtemp, nullptr);
-        getline(sep1, fieldtemp, ',');
-        int y = stoi(fieldtemp, nullptr);
-        int intId = x / 32 * width + y;
-        int intLane = x % 32;
-        C0b[intId] |= 1 << 32 - intLane - 1;
+    for(; ones > 0; --ones) {
+        std::uint64_t r, c;
+        is >> r >> c;
+        int vecId = r / 32 * width + c;
+        int vecLane = r % 32;
+        C0b[vecId] |= 1 << 32 - vecLane - 1;
         nonzeroelements++;
     }
     
