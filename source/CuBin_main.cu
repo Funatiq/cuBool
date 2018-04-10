@@ -1,6 +1,6 @@
 #include <vector>
 #include <iostream>
-#include <limits>
+// #include <limits>
 
 #include "helper/config.h"
 #include "helper/rngpu.hpp"
@@ -9,6 +9,7 @@
 #include "helper/args_parser.h"
 
 #include "CuBin_gpu.cuh"
+#include "CuBin_cpu.h"
 
 using namespace std;
 
@@ -41,6 +42,8 @@ int main(int argc, char **argv) {
     config.flipManyChance = args.get<float>({"fc","chance","flipchance","flipmanychance"}, config.flipManyChance);
     config.flipManyDepth = args.get<uint32_t>({"fd","depth","flipdepth","flipmanydepth"}, config.flipManyDepth);
 
+    config.stuckIterationsBeforeBreak = config.tempReduceEvery << 2;
+
      cout << "verbosity " << config.verbosity << "\n"
         << "factorDim " << (int)factorDim << "\n"
         << "maxIterations " << config.maxIterations << "\n"
@@ -69,7 +72,7 @@ int main(int argc, char **argv) {
     float density;
     
     vector<my_bit_vector_t> A0_vec, B0_vec, C0_vec;
-    string ending = "data";
+    string ending = ".in";
     if (endsWith(filename, ending)) {
         // Read file and save matrix in C0
         // COO coordinates
@@ -89,9 +92,12 @@ int main(int argc, char **argv) {
     vector<my_bit_vector_t> A_vec, B_vec;
     initializeFactors(A_vec, B_vec, height, width, factorDim, density, &state);
 
+    // computeDistanceCPU(A_vec, B_vec, C0_vec, height, width);
+
     // copy matrices to GPU and run optimization
     auto cubin = CuBin<my_bit_vector_t>(A_vec, B_vec, C0_vec, factorDim);
     int distance = cubin.getDistance();
+    cubin.verifyDistance();
     TIMERSTART(GPUKERNELLOOP)
     cubin.run(config);
     TIMERSTOP(GPUKERNELLOOP)

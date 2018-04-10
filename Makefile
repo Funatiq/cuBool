@@ -3,6 +3,7 @@ DEBUG = -g -G
 
 HEADERS = \
 	source/CuBin_gpu.cuh \
+	source/CuBin_cpu.h \
 	source/helper/config.h \
 	source/helper/cuda_helpers.cuh \
 	source/helper/rngpu.hpp \

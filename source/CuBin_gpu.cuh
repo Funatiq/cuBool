@@ -71,7 +71,7 @@ float get_float_update(const uint8_t factorDim, fast_kiss_state32_t * state, con
 // Metropolis–Hastings algorithm
 __inline__ __device__
 bool metro(fast_kiss_state32_t * state, const int error, const float temperature, const int error_max) {
-    if(error < 0)
+    if(error <= 0)
         return true;
     if(temperature <= 0)
         return false;
@@ -81,29 +81,33 @@ bool metro(fast_kiss_state32_t * state, const int error, const float temperature
 }
 
 //
+template<typename bit_vector_t>
 __global__
-void computeFullDistance(const uint32_t * __restrict__ Ab,
-                         const uint32_t * __restrict__ Bb,
-                         const uint32_t * __restrict__ Cb, 
+void computeDistanceRows(const bit_vector_t * __restrict__ Ab,
+                         const bit_vector_t * __restrict__ Bb,
+                         const bit_vector_t * __restrict__ Cb, 
                          const int height, const int width,
                          const int padded_width,
                          const uint8_t factorDim,
-                         int *distance_test)
+                         int *global_error)
 {
     const int warpId = (threadIdx.x + blockIdx.x * blockDim.x) / warpSize;
     const int warpLane = threadIdx.x % warpSize;
 
-    __shared__ int reductionArray[32];
+    __shared__ int reductionArray[WARPSPERBLOCK];
     
     const int i = warpId;
     int error_thread = 0;
     if (i < height) {
-        for (int j = warpLane; j < width; j += warpSize) {
-            const int lineSum = (Ab[i] & Bb[j]) ? 1 : 0;
-            const int intId = i / 32 * padded_width + j;
-            const int intLane = i % 32;
+        const bit_vector_t A_i = Ab[i];
 
-            const int truthEntry = (Cb[intId] >> (32 - intLane - 1)) & 1; 
+        for (int j = warpLane; j < width; j += warpSize) {
+            const int lineSum = (A_i & Bb[j]) ? 1 : 0;
+
+            const int vecId = i / 32 * padded_width + j;
+            const int vecLane = i % 32;
+            const int truthEntry = (Cb[vecId] >> (32 - vecLane - 1)) & 1; 
+
             error_thread += lineSum ^ truthEntry;
         }
     }
@@ -112,17 +116,79 @@ void computeFullDistance(const uint32_t * __restrict__ Ab,
     // Thread with threadIdx.x==0 now has total error of block
 
     if (threadIdx.x == 0)
-        atomicAdd(distance_test, error_block);
+        atomicAdd(global_error, error_block);
+}
+
+template<typename bit_vector_t>
+__global__
+void computeDistanceRowsShared(const bit_vector_t * __restrict__ Ab,
+                     const bit_vector_t * __restrict__ Bb,
+                     const bit_vector_t * __restrict__ Cb, 
+                     const int height,
+                     const int width,
+                     const int padded_width,
+                     const uint8_t factorDim,
+                     int *global_error)
+{
+    __shared__ bit_vector_t B_block[ 32 * WARPSPERBLOCK ];
+    __shared__ bit_vector_t C_block[ 32 * WARPSPERBLOCK ];
+
+    // const int warpId = (threadIdx.x + blockIdx.x * blockDim.x) / warpSize;
+    const int warpIdIntern = threadIdx.x / warpSize;
+    const int warpId = blockIdx.x * WARPSPERBLOCK + warpIdIntern;
+    const int warpLane = threadIdx.x % warpSize;
+
+    const int blockSize = WARPSPERBLOCK*32;
+
+    __shared__ int reductionArray[WARPSPERBLOCK];
+    
+    const int i = warpId;
+    const bit_vector_t A_i = i < height ? Ab[i] : 0;
+
+    const int vecRow = i / 32;
+    const int vecFirst = vecRow * padded_width;
+    const int vecLane = i % 32;
+    const int col_in_tile = warpLane;
+    const int shift = (32 - vecLane - 1);
+    const int padded_width_blocks = SDIV(width, blockSize) * blockSize;
+    int error_thread = 0;
+    for (int j = threadIdx.x; j < padded_width_blocks; j += blockSize) {
+        B_block[threadIdx.x] = (j < width) ? Bb[j] : 0;
+        C_block[threadIdx.x] = (j < width) ? Cb[vecFirst + j] : 0;
+        __syncthreads();
+
+        if(i < height) {
+            #pragma unroll
+            for(int w = 0; w < WARPSPERBLOCK; ++w) {
+                const bit_vector_t B_j = B_block[w*warpSize + warpLane];
+
+                // const int vecId = vecFirst + j/(blockSize)*(blockSize) + w*warpSize + warpLane;
+                // const int cTruthEntry = (Cb[vecId] >> shift) & 1;
+                const int cTruthEntry = (C_block[w*warpSize + col_in_tile] >> shift) & 1;
+
+                const int lineSum = (B_j & A_i) ? 1 : 0;
+
+                error_thread += lineSum ^ cTruthEntry;
+            }
+        }
+        __syncthreads();
+    }
+
+    const int error_block = blockReduceSum(error_thread, reductionArray);
+    // Thread with threadIdx.x==0 now has total error of block
+
+    if (threadIdx.x == 0)
+        atomicAdd(global_error, error_block);
 }
 
 __global__
-void computeFullDistance(const float * __restrict__ A,
+void computeDistanceRowsShared(const float * __restrict__ A,
                          const float * __restrict__ B,
                          const uint32_t * __restrict__ Cb, 
                          const int height, const int width,
                          const int padded_width,
                          const uint8_t factorDim,
-                         int *distance_test)
+                         int *global_error)
 {
     // const int warpId = (threadIdx.x + blockIdx.x * blockDim.x) / warpSize;
     const int warpIdIntern = threadIdx.x / warpSize;
@@ -181,19 +247,19 @@ void computeFullDistance(const float * __restrict__ A,
         // Thread with threadIdx.x==0 now has total error of block
 
        if (threadIdx.x == 0) {
-            atomicAdd(distance_test, error_block);
+            atomicAdd(global_error, error_block);
        }
     }
 }
 
 __global__
-void computeFullDistance2(const float * __restrict__ A,
+void computeDistanceColsShared(const float * __restrict__ A,
                          const float * __restrict__ B,
                          const uint32_t * __restrict__ Cb, 
                          const int height, const int width,
                          const int padded_width,
                          const uint8_t factorDim,
-                         int *distance_test)
+                         int *global_error)
 {
     // const int warpId = (threadIdx.x + blockIdx.x * blockDim.x) / warpSize;
     const int warpIdIntern = threadIdx.x / warpSize;
@@ -255,7 +321,7 @@ void computeFullDistance2(const float * __restrict__ A,
         // Thread with threadIdx.x==0 now has total error of block
 
        if (threadIdx.x == 0) {
-            atomicAdd(distance_test, error_block);
+            atomicAdd(global_error, error_block);
        }
     }
 }
@@ -307,22 +373,22 @@ vectorMatrixMultCompareRowWarpShared(bit_vector_t *A,
     const int shift = (32 - vecLane - 1);
     const int padded_width_blocks = SDIV(width, WARPSPERBLOCK*32) * WARPSPERBLOCK*32;
     int error_thread = 0;
-    for (int j = threadIdx.x; j < padded_width_blocks; j += blockDim.x) {
+    for (int j = threadIdx.x; j < padded_width_blocks; j += WARPSPERBLOCK*32) {
         B_block[threadIdx.x] = (j < width) ? B[j] : 0;
-        C_block[threadIdx.x] = C[vecFirst + j];
+        C_block[threadIdx.x] = (j < width) ? C[vecFirst + j] : 0;
         __syncthreads();
 
         if(i < height) {
             #pragma unroll
             for(int w = 0; w < WARPSPERBLOCK; ++w) {
-                const bit_vector_t B_j_thread = B_block[w*warpSize + warpLane];
+                const bit_vector_t B_j = B_block[w*warpSize + warpLane];
                 const int cTruthEntry = (C_block[w*warpSize + col_in_tile] >> shift) & 1;
                 // int col = j / blockDim.x * blockDim.x + w*warpSize + warpLane;
-                // bit_vector_t B_j_thread = B[col];
+                // bit_vector_t B_j = B[col];
                 // int cTruthEntry = (C[vecFirst + col] >> shift) & 1; 
 
-                const int cEntryNew = (B_j_thread & A_i_changed) ? 1 : 0;
-                const int cEntryOld = (B_j_thread & A_i        ) ? 1 : 0;
+                const int cEntryNew = (B_j & A_i_changed) ? 1 : 0;
+                const int cEntryOld = (B_j & A_i        ) ? 1 : 0;
 
                 // if (col < width)
                 error_thread += (cEntryNew ^ cTruthEntry) - (cEntryOld ^ cTruthEntry);
@@ -396,7 +462,7 @@ vectorMatrixMultCompareColWarpShared(const bit_vector_t * __restrict__ A,
     const int colFirst = j / 32 * 32;
     const int shift = (32 - vecLane - 1);
     const int padded_height_blocks = SDIV(height, WARPSPERBLOCK*32) * WARPSPERBLOCK*32;
-    for (int i = threadIdx.x; i < padded_height_blocks; i += blockDim.x) {
+    for (int i = threadIdx.x; i < padded_height_blocks; i += WARPSPERBLOCK*32) {
         A_block[threadIdx.x] = (i < height) ? A[i] : 0;
         const int vecRow = i / 32;
         const int vecFirst = vecRow * padded_width + colFirst;
@@ -406,15 +472,15 @@ vectorMatrixMultCompareColWarpShared(const bit_vector_t * __restrict__ A,
         if (j < width) {
             #pragma unroll
             for(int w = 0; w < WARPSPERBLOCK; ++w) {
-                const bit_vector_t A_i_thread = A_block[w*warpSize + warpLane];
+                const bit_vector_t A_i = A_block[w*warpSize + warpLane];
                 const int cTruthEntry = (C_block[w*warpSize + col_in_tile] >> shift) & 1;
 
                 // int row = i / blockDim.x * blockDim.x + w*warpSize + warpLane;
-                // bit_vector_t A_i_thread = (row < height) ? A[row] : 0;
+                // bit_vector_t A_i = (row < height) ? A[row] : 0;
                 // int cTruthEntry = (C[vecFirst + col_in_tile] >> shift) & 1; 
 
-                const int cEntryNew = (A_i_thread & B_j_changed) > 0 ? 1 : 0;
-                const int cEntryOld = (A_i_thread & B_j        ) > 0 ? 1 : 0;
+                const int cEntryNew = (A_i & B_j_changed) ? 1 : 0;
+                const int cEntryOld = (A_i & B_j        ) ? 1 : 0;
 
                 // if (row < height)
                 error_thread += (cEntryNew ^ cTruthEntry) - (cEntryOld ^ cTruthEntry);
@@ -476,7 +542,7 @@ vectorMatrixMultCompareRowWarpShared(float *A,
     const int warpLane = threadIdx.x % warpSize;
 
     __shared__ float B_block[CHUNK_SIZE][32];
-    __shared__ uint32_t C_block[CHUNK_SIZE];
+    __shared__ bit_vector_t C_block[CHUNK_SIZE];
 
     const uint32_t dim_mask = FULLMASK >> (32 - factorDim);
 
@@ -652,6 +718,8 @@ public:
         cudaDeviceProp prop;
         cudaGetDeviceProperties(&prop, device_id);
 
+        std::cout << "Using device " << device_id << ": " << prop.name << std::endl;
+
         max_parallel_lines_ = prop.multiProcessorCount * WARPSPERBLOCK;
 
         if(factorDim > 32) {
@@ -668,7 +736,7 @@ public:
     }
 
     bool initialize(const factor_matrix_t& A, const factor_matrix_t& B, const bit_matrix_t& C) {
-        if(std::is_same<factor_t, uint32_t>::value) {
+        if (std::is_same<factor_t, uint32_t>::value) {
             lineSize_ = 1;
             lineSize_padded_ = 1;
         }
@@ -698,9 +766,9 @@ public:
         // size_t width_padded = SDIV(width_, WARPSPERBLOCK) * WARPSPERBLOCK;
         cudaMalloc(&d_B, lineBytes_padded * width_); CUERR
         
-        size_t height__C = SDIV(height_, 32);
+        size_t height_C = SDIV(height_, 32);
         width_C_padded_ = SDIV(width_, 32) * 32;
-        cudaMalloc(&d_C, sizeof(bit_vector_t) * height__C * width_C_padded_); CUERR
+        cudaMalloc(&d_C, sizeof(bit_vector_t) * height_C * width_C_padded_); CUERR
 
         cudaMemcpy2D(d_A, lineBytes_padded,
                      A.data(), lineBytes,
@@ -715,7 +783,7 @@ public:
         cudaMemcpy2D(d_C, sizeof(bit_vector_t) * width_C_padded_,
                      C.data(), sizeof(bit_vector_t) * width_,
                      sizeof(bit_vector_t) * width_,
-                     height__C,
+                     height_C,
                      cudaMemcpyHostToDevice); CUERR
 
 
@@ -723,7 +791,7 @@ public:
         cudaMalloc(&d_distance_, sizeof(int)); CUERR
         cudaMemset(d_distance_, 0, sizeof(int)); CUERR
 
-        computeFullDistance <<< SDIV(width_, WARPSPERBLOCK), WARPSPERBLOCK*32 >>>
+        computeDistanceRowsShared <<< SDIV(height_, WARPSPERBLOCK), WARPSPERBLOCK*32 >>>
                         (d_A, d_B, d_C, height_, width_, width_C_padded_, factorDim_, d_distance_);
 
         cudaDeviceSynchronize(); CUERR
@@ -754,7 +822,7 @@ public:
         cudaMalloc(&d_distance_proof, sizeof(int)); CUERR
         cudaMemset(d_distance_proof, 0, sizeof(int)); CUERR
 
-        computeFullDistance <<< SDIV(width_, WARPSPERBLOCK), WARPSPERBLOCK*32 >>>
+        computeDistanceRowsShared <<< SDIV(height_, WARPSPERBLOCK), WARPSPERBLOCK*32 >>>
                         (d_A, d_B, d_C, height_, width_, width_C_padded_, factorDim_, d_distance_proof);
 
         cudaDeviceSynchronize(); CUERR
@@ -818,7 +886,7 @@ public:
     }
 
     struct CuBin_config {
-        size_t verbosity = 2;
+        size_t verbosity = 1;
         size_t linesAtOnce = 0;
         size_t maxIterations = 0;
         int distanceThreshold = 0;
@@ -831,6 +899,7 @@ public:
         bool loadBalance = false;
         float flipManyChance = 0.1f;
         uint32_t flipManyDepth = 2;
+        size_t stuckIterationsBeforeBreak = std::numeric_limits<size_t>::max();
     };
 
     void run(const CuBin_config& config) {
@@ -866,9 +935,12 @@ public:
         fast_kiss_state32_t state = get_initial_fast_kiss_state32(config.seed);
         float temperature = config.tempStart;
         size_t iteration = 0;
+        size_t stuckIterations = 0;
+        auto distancePrev = *distance_;
         while( *distance_ > config.distanceThreshold
                 && iteration++ < config.maxIterations
-                && temperature > config.tempEnd) {
+                && temperature > config.tempEnd
+                && stuckIterations < config.stuckIterationsBeforeBreak) {
 
             // Change rows
             int lineToBeChanged = (fast_kiss32(&state) % height_) / WARPSPERBLOCK * WARPSPERBLOCK;
@@ -906,6 +978,11 @@ public:
                 if(config.verbosity > 1)
                     std::cout << "Iteration: " << iteration << " \tTemperature: " << temperature << std::endl;
             }
+            if(*distance_ == distancePrev)
+                stuckIterations++;
+            else
+                stuckIterations = 0;
+            distancePrev = *distance_;
         }
 
         if(config.verbosity > 0) {
@@ -915,6 +992,8 @@ public:
                 std::cout << "Distance below threshold." << std::endl;
             if (!(temperature > config.tempEnd))
                 std::cout << "Temperature below threshold." << std::endl;
+            if (!(stuckIterations < config.stuckIterationsBeforeBreak))
+                std::cout << "Stuck for " << stuckIterations << " iterations." << std::endl;
         }
         std::cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n";
         std::cout << "Final distance_: " << (float) *distance_ / (height_ * width_)
