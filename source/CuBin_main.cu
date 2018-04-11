@@ -36,13 +36,13 @@ int main(int argc, char **argv) {
     config.tempStart = args.get<float>({"ts","tempstart","starttemp"}, config.tempStart);
     config.tempEnd = args.get<float>({"te","tempend","endtemp"}, config.tempEnd);
     config.tempFactor = args.get<float>({"tf","factor","tempfactor"}, config.tempFactor);
-    config.tempReduceEvery = args.get<size_t>({"tr","reduce","tempiterations"}, config.tempReduceEvery);
+    config.tempStep = args.get<size_t>({"tm","step","tempstep","move","tempmove"}, config.tempStep);
     config.seed = args.get<uint32_t>({"seed"}, config.seed);
     config.loadBalance = args.contains({"b","balance","loadbalance"});
     config.flipManyChance = args.get<float>({"fc","chance","flipchance","flipmanychance"}, config.flipManyChance);
     config.flipManyDepth = args.get<uint32_t>({"fd","depth","flipdepth","flipmanydepth"}, config.flipManyDepth);
 
-    config.stuckIterationsBeforeBreak = config.tempReduceEvery << 2;
+    config.stuckIterationsBeforeBreak = args.get<size_t>({"stuck"}, config.stuckIterationsBeforeBreak);
 
      cout << "verbosity " << config.verbosity << "\n"
         << "factorDim " << (int)factorDim << "\n"
@@ -50,10 +50,11 @@ int main(int argc, char **argv) {
         << "linesAtOnce " << config.linesAtOnce << "\n"
         << "distanceThreshold " << config.distanceThreshold << "\n"
         << "distanceShowEvery " << config.distanceShowEvery << "\n"
+        << "stuckIterationsBeforeBreak " << config.stuckIterationsBeforeBreak << "\n"
         << "tempStart " << config.tempStart << "\n"
         << "tempEnd " << config.tempEnd << "\n"
         << "tempFactor " << config.tempFactor << "\n"
-        << "tempReduceEvery " << config.tempReduceEvery << "\n"
+        << "tempStep " << config.tempStep << "\n"
         << "seed " << config.seed << "\n"
         << "loadBalance " << config.loadBalance << "\n"
         << "flipManyChance " << config.flipManyChance << "\n"
@@ -84,7 +85,7 @@ int main(int argc, char **argv) {
         // width = 5*1024;
         generate_random_matrix(height, width, factorDim, 3, A0_vec, B0_vec, C0_vec, density);
     } else {
-        printf("Wrong data file\n");
+        cerr << "Wrong data file" << endl;
         return 0;
     }
 
@@ -93,6 +94,7 @@ int main(int argc, char **argv) {
     initializeFactors(A_vec, B_vec, height, width, factorDim, density, &state);
 
     // computeDistanceCPU(A_vec, B_vec, C0_vec, height, width);
+    // writeToFiles(filename + "_start", A_vec, B_vec, height, width, factorDim);
 
     // copy matrices to GPU and run optimization
     auto cubin = CuBin<my_bit_vector_t>(A_vec, B_vec, C0_vec, factorDim);
@@ -102,8 +104,15 @@ int main(int argc, char **argv) {
     cubin.run(config);
     TIMERSTOP(GPUKERNELLOOP)
     cubin.verifyDistance();
+
+    cubin.getFactors(A_vec, B_vec);
     cubin.clear();
 
+    computeDistanceCPU(A_vec, B_vec, C0_vec, height, width);
+    // writeToFiles(filename + "_end", A_vec, B_vec, height, width, factorDim);
+
+    vector<coo> C = computeProduct(A_vec, B_vec, height, width);
+    cout << "Nonzeros in product: " << C.size() << endl;
     return 0;
 }
 

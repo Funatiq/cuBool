@@ -198,68 +198,44 @@ bool endsWith(const string& s, const string& suffix) {
     return s.rfind(suffix) == (s.size()-suffix.size());
 }
 
-// Write result matrix in file
-void writeToFiles(const vector<uint32_t> &Ab, const vector<uint32_t> &Bb, const int height, const int width, const uint8_t factorDim)
-{
-    time_t rawtime;
-    struct tm * timeinfo;
-    char buffer[80];
-
-    time (&rawtime);
-    timeinfo = localtime(&rawtime);
-
-    strftime(buffer, sizeof(buffer), "%X", timeinfo);
-    string str = buffer;
-    
-    string a = string("A_") + buffer + string(".data");
-    string b = string("B_") + buffer + string(".data");
-    
-    ofstream myfile(a);
-    if (myfile.is_open()){
-        myfile << height << " " << factorDim << "\n";
-        for (int i = 0; i < height; i++){
-            // bitset<32> row(Ab[i] >> (32 - factorDim));
-            // myfile << row << "\n";
-            for(int k=0; k < factorDim; ++k)
-                myfile << ((Ab[i] >> 32 - 1 - k) & 1 ? 1 : 0);
-            myfile << "\n";
-        }
-        myfile.close();
-    }
-    
-    ofstream myfile2(b);
-    if(myfile2.is_open()){
-        myfile2 << factorDim << " " << width << "\n";
-        for (int j = 0; j<factorDim; j++){
-            // bitset<32> col(Bb[j] >> (32 - factorDim));
-            // myfile2 << col << "\n";
-            for(int k=0; k < factorDim; ++k)
-                myfile2 << ((Bb[j] >> 32 - 1 - k) & 1 ? 1 : 0);
-            myfile2 << "\n";
-        }
-        myfile2.close();
-    }   
-    cout << "Writing to files \"" << a << "\" and \"" << b << "\" complete" << endl;
-}
-
 // Initialization of A and B
 void initializeFactors( vector<uint32_t> &Ab, vector<uint32_t> &Bb, 
                         const int height, const int width,
                         const uint8_t factorDim,
-                        const float density, fast_kiss_state32_t *state,
-                        int padded_height = 0, int padded_width = 0)
+                        const float density,
+                        fast_kiss_state32_t *state)
 {
-    if (padded_height == 0)
-        padded_height = height;
-    if (padded_width == 0)
-        padded_width = width;
-
     Ab.clear();
-    Ab.resize(padded_height, 0);
+    Ab.resize(height, 0);
     Bb.clear();
-    Bb.resize(padded_width, 0);
+    Bb.resize(width, 0);
 
-    // Initialize A and B and copy to device
+    // Initialize A and B
+    // for (int i = 0; i < height; i++) {
+    //     Ab[i] = fast_kiss32(state) << (32-factorDim);
+    // }
+
+    // for (int j = 0; j < width; j++) {
+    //     Bb[j] = fast_kiss32(state) << (32-factorDim);;
+    // }
+    
+    printf("Initialization of A and B complete\n");
+    printf("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
+}
+
+// Initialization of A and B
+void initializeFactors2( vector<uint32_t> &Ab, vector<uint32_t> &Bb, 
+                        const int height, const int width,
+                        const uint8_t factorDim,
+                        const float density,
+                        fast_kiss_state32_t *state)
+{
+    Ab.clear();
+    Ab.resize(height, 0);
+    Bb.clear();
+    Bb.resize(width, 0);
+
+    // Initialize A and B
     bool threshold;
     for (int i = 0; i < height; i++) {
         #pragma unroll
@@ -275,7 +251,7 @@ void initializeFactors( vector<uint32_t> &Ab, vector<uint32_t> &Bb,
                                         < density;
                                         break;
             }
-            Ab[i] |= threshold ? 1 << (32 - j - 1) : 0 ;
+            if (threshold) Ab[i] |= 1 << (32 - j - 1);
         }
     }
 
@@ -293,7 +269,7 @@ void initializeFactors( vector<uint32_t> &Ab, vector<uint32_t> &Bb,
                                         < density;
                                         break;
             }
-            Bb[i] |= threshold ? 1 << (32 - j - 1) : 0 ;
+            if (threshold) Bb[i] |= 1 << (32 - j - 1);
         }
     }
     
@@ -305,20 +281,15 @@ void initializeFactors( vector<uint32_t> &Ab, vector<uint32_t> &Bb,
 void initializeFactors( vector<float> &A, vector<float> &B, 
                         const int height, const int width,
                         const uint8_t factorDim,
-                        const float density, fast_kiss_state32_t *state,
-                        int padded_height = 0, int padded_width = 0)
+                        const float density,
+                        fast_kiss_state32_t *state)
 {
-    if (padded_height == 0)
-        padded_height = height;
-    if (padded_width == 0)
-        padded_width = width;
-
     A.clear();
-    A.resize(padded_height * factorDim, 0);
+    A.resize(height * factorDim, 0);
     B.clear();
-    B.resize(padded_width * factorDim, 0);
+    B.resize(width * factorDim, 0);
 
-    // Initialize A and B and copy to device
+    // Initialize A and B
     for (int i = 0; i < height; i++) {
         #pragma unroll
         for (int j = 0; j < factorDim; j++) {
@@ -338,23 +309,18 @@ void initializeFactors( vector<float> &A, vector<float> &B,
 }
 
 // Initialization of A and B
-void initializeFactors2( vector<float> &A, vector<float> &B, 
-                        const int height, const int width,
-                        const uint8_t factorDim,
-                        const float density, fast_kiss_state32_t *state,
-                        int padded_height = 0, int padded_width = 0)
+void initializeFactors2( vector<float> &A, vector<float> &B,
+                         const int height, const int width,
+                         const uint8_t factorDim,
+                         const float density,
+                         fast_kiss_state32_t *state)
 {
-    if (padded_height == 0)
-        padded_height = height;
-    if (padded_width == 0)
-        padded_width = width;
-
     A.clear();
-    A.resize(padded_height * factorDim, 0);
+    A.resize(height * factorDim, 0);
     B.clear();
-    B.resize(padded_width * factorDim, 0);
+    B.resize(width * factorDim, 0);
 
-    // Initialize A and B and copy to device
+    // Initialize A and B
     bool threshold;
     for (int i = 0; i < height; i++) {
         #pragma unroll
@@ -395,4 +361,59 @@ void initializeFactors2( vector<float> &A, vector<float> &B,
     printf("Initialization of A and B complete\n");
     printf("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
 }
+
+// Write result matrix in file
+void writeToFiles(const string filename,
+                  const vector<uint32_t> &Ab,
+                  const vector<uint32_t> &Bb,
+                  const int height,
+                  const int width,
+                  const uint8_t factorDim)
+{
+    time_t rawtime;
+    struct tm * timeinfo;
+    char buffer[80];
+
+    time (&rawtime);
+    timeinfo = localtime(&rawtime);
+
+    strftime(buffer, sizeof(buffer), "%X", timeinfo);
+    string str = buffer;
+    
+    string filename_A = filename + '_' + string("factor_A_") + buffer + string(".data");
+    string filename_B = filename + '_' + string("factor_B_") + buffer + string(".data");
+    
+    ofstream os_A(filename_A);
+    if (os_A.good()){
+        os_A << height << " " << (int)factorDim << "\n";
+        for (int i = 0; i < height; i++){
+            // bitset<32> row(Ab[i] >> (32 - factorDim));
+            // os_A << row << "\n";
+            for(int k=0; k < factorDim; ++k)
+                os_A << ((Ab[i] >> 32 - 1 - k) & 1 ? 1 : 0);
+            os_A << "\n";
+        }
+        os_A.close();
+    } else {
+        cerr << "File " << filename_A << " could not be openend!" << endl;
+    }
+    
+    ofstream os_B(filename_B);
+    if(os_B.good()){
+        os_B  << width << " " << (int)factorDim << "\n";
+        for (int j = 0; j<factorDim; j++){
+            // bitset<32> col(Bb[j] >> (32 - factorDim));
+            // os_B << col << "\n";
+            for(int k=0; k < factorDim; ++k)
+                os_B << ((Bb[j] >> 32 - 1 - k) & 1 ? 1 : 0);
+            os_B << "\n";
+        }
+        os_B.close();
+    } else {
+        cerr << "File " << filename_B << " could not be openend!" << endl;
+    }
+    
+    cout << "Writing to files \"" << filename_A << "\" and \"" << filename_B << "\" complete" << endl;
+}
+
 #endif

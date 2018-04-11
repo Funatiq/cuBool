@@ -76,7 +76,8 @@ bool metro(fast_kiss_state32_t * state, const int error, const float temperature
     if(temperature <= 0)
         return false;
     const float randomNumber = fast_kiss32(state) / (float) UINT32_MAX;
-    const float metro = fminf(1.0f, expf((float) - error / error_max / temperature));
+    // const float metro = fminf(1.0f, expf((float) - error / error_max / temperature));
+    const float metro = expf((float) - error / error_max / temperature);
     return randomNumber < metro;
 }
 
@@ -866,14 +867,14 @@ public:
                      d_A, lineBytes_padded,
                      lineBytes,
                      height_,
-                     cudaMemcpyHostToDevice); CUERR
+                     cudaMemcpyDeviceToHost); CUERR
         
         B.resize(width_);
         cudaMemcpy2D(B.data(), lineBytes,
                      d_B, lineBytes_padded,
                      lineBytes,
                      width_,
-                     cudaMemcpyHostToDevice); CUERR
+                     cudaMemcpyDeviceToHost); CUERR
     }
 
     int getDistance() {
@@ -894,7 +895,7 @@ public:
         float tempStart = 0.0f;
         float tempEnd = -1.0f;
         float tempFactor = 0.98f;
-        size_t tempReduceEvery = std::numeric_limits<size_t>::max();
+        size_t tempStep = std::numeric_limits<size_t>::max();
         uint32_t seed = 0;
         bool loadBalance = false;
         float flipManyChance = 0.1f;
@@ -924,7 +925,7 @@ public:
             if(config.tempStart > 0) {
                 std::cout << "- - - - Start temperature " << config.tempStart
                           << " multiplied by " << config.tempFactor
-                          << " every " << config.tempReduceEvery
+                          << " every " << config.tempStep
                           << " steps\n";
 
             }
@@ -967,16 +968,14 @@ public:
             getDistance();
 
             if(config.verbosity > 0 && iteration % config.distanceShowEvery == 0) {
-                std::cout << "Iteration: " << iteration 
-                          << " \tCurrent distance: " << (float) *distance_ / (height_*width_)
-                          << " = " << *distance_ << " elements" << std::endl;
-                if(config.verbosity < 2)
-                    std::cout << "Iteration: " << iteration << " \tTemperature: " << temperature << std::endl;
+                std::cout << "Iteration: " << iteration
+                          << "\tabs_err: " << *distance_
+                          << "\trel_err: " << (float) *distance_ / (height_*width_)
+                          << "\ttemp: " << temperature;
+                std::cout << std::endl;
             }
-            if(iteration % config.tempReduceEvery == 0) {
+            if(iteration % config.tempStep == 0) {
                 temperature *= config.tempFactor;
-                if(config.verbosity > 1)
-                    std::cout << "Iteration: " << iteration << " \tTemperature: " << temperature << std::endl;
             }
             if(*distance_ == distancePrev)
                 stuckIterations++;
