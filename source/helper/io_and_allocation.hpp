@@ -34,12 +34,12 @@ void generate_random_matrix(const int height, const int width, const uint8_t fac
     for(int i=0; i < height; ++i) {
         // Ab[i] = bit_vector_mask;
         for(int kiss = 0; kiss < num_kiss; ++kiss)
-            Ab[i] &= fast_kiss32(&state);
+            Ab[i] &= fast_kiss32(state);
     }
     for(int j=0; j < width; ++j) {
         // Bb[j] = bit_vector_mask;
         for(int kiss = 0; kiss < num_kiss; ++kiss)
-            Bb[j] &= fast_kiss32(&state);
+            Bb[j] &= fast_kiss32(state);
     }
 
     // Malloc for C0b
@@ -93,14 +93,14 @@ void generate_random_matrix(const int height, const int width, const uint8_t fac
     for(int i=0; i < height; ++i) {
         uint32_t mask = bit_vector_mask;
         for(int kiss = 0; kiss < num_kiss; ++kiss)
-            mask &= fast_kiss32(&state);
+            mask &= fast_kiss32(state);
         for(int k=0; k < factorDim; ++k)
             A[i * factorDim + k] = (mask >> 32 - 1 - k) & 1 ? 1 : 0;
     }
     for(int j=0; j < width; ++j) {
         uint32_t mask = bit_vector_mask;
         for(int kiss = 0; kiss < num_kiss; ++kiss)
-            mask &= fast_kiss32(&state);
+            mask &= fast_kiss32(state);
         for(int k=0; k < factorDim; ++k)
             B[j * factorDim + k] = (mask >> 32 - 1 - k) & 1 ? 1 : 0;
     }
@@ -110,11 +110,11 @@ void generate_random_matrix(const int height, const int width, const uint8_t fac
     //     threshold /= 2.0f;
 
     // for(int i=0; i < height * factorDim; ++i) {
-    //     float random = (float) fast_kiss32(&state) / UINT32_MAX;
+    //     float random = (float) fast_kiss32(state) / UINT32_MAX;
     //     A[i] = random < threshold ? 1.0f : 0.0f;
     // }
     // for(int j=0; j < width * factorDim; ++j) {
-    //     float random = (float) fast_kiss32(&state) / UINT32_MAX;
+    //     float random = (float) fast_kiss32(state) / UINT32_MAX;
     //     B[i] = random < threshold ? 1.0f : 0.0f;
     // }
 
@@ -203,7 +203,7 @@ void initializeFactors( vector<uint32_t> &Ab, vector<uint32_t> &Bb,
                         const int height, const int width,
                         const uint8_t factorDim,
                         const float density,
-                        fast_kiss_state32_t *state)
+                        fast_kiss_state32_t state)
 {
     Ab.clear();
     Ab.resize(height, 0);
@@ -211,13 +211,13 @@ void initializeFactors( vector<uint32_t> &Ab, vector<uint32_t> &Bb,
     Bb.resize(width, 0);
 
     // Initialize A and B
-    // for (int i = 0; i < height; i++) {
-    //     Ab[i] = fast_kiss32(state) << (32-factorDim);
-    // }
+    for (int i = 0; i < height; i++) {
+        Ab[i] = fast_kiss32(state) << (32-factorDim);
+    }
 
-    // for (int j = 0; j < width; j++) {
-    //     Bb[j] = fast_kiss32(state) << (32-factorDim);;
-    // }
+    for (int j = 0; j < width; j++) {
+        Bb[j] = fast_kiss32(state) << (32-factorDim);
+    }
     
     printf("Initialization of A and B complete\n");
     printf("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
@@ -228,7 +228,7 @@ void initializeFactors2( vector<uint32_t> &Ab, vector<uint32_t> &Bb,
                         const int height, const int width,
                         const uint8_t factorDim,
                         const float density,
-                        fast_kiss_state32_t *state)
+                        fast_kiss_state32_t state)
 {
     Ab.clear();
     Ab.resize(height, 0);
@@ -282,7 +282,7 @@ void initializeFactors( vector<float> &A, vector<float> &B,
                         const int height, const int width,
                         const uint8_t factorDim,
                         const float density,
-                        fast_kiss_state32_t *state)
+                        fast_kiss_state32_t state)
 {
     A.clear();
     A.resize(height * factorDim, 0);
@@ -313,7 +313,7 @@ void initializeFactors2( vector<float> &A, vector<float> &B,
                          const int height, const int width,
                          const uint8_t factorDim,
                          const float density,
-                         fast_kiss_state32_t *state)
+                         fast_kiss_state32_t state)
 {
     A.clear();
     A.resize(height * factorDim, 0);
@@ -382,10 +382,16 @@ void writeToFiles(const string filename,
     
     string filename_A = filename + '_' + string("factor_A_") + buffer + string(".data");
     string filename_B = filename + '_' + string("factor_B_") + buffer + string(".data");
+
+    int nonzeroelements = 0;
+    for (int i = 0; i < height; i++){
+        bitset<32> row(Ab[i]);
+        nonzeroelements += row.count();
+    }
     
     ofstream os_A(filename_A);
     if (os_A.good()){
-        os_A << height << " " << (int)factorDim << "\n";
+        os_A << height << " " << (int)factorDim << " " << nonzeroelements << "\n";
         for (int i = 0; i < height; i++){
             // bitset<32> row(Ab[i] >> (32 - factorDim));
             // os_A << row << "\n";
@@ -398,10 +404,16 @@ void writeToFiles(const string filename,
         cerr << "File " << filename_A << " could not be openend!" << endl;
     }
     
+    nonzeroelements = 0;
+    for (int j = 0; j < width; j++){
+        bitset<32> col(Bb[j]);
+        nonzeroelements += col.count();
+    }
+
     ofstream os_B(filename_B);
     if(os_B.good()){
-        os_B  << width << " " << (int)factorDim << "\n";
-        for (int j = 0; j<factorDim; j++){
+        os_B  << width << " " << (int)factorDim << " " << nonzeroelements << "\n";
+        for (int j = 0; j < width; j++){
             // bitset<32> col(Bb[j] >> (32 - factorDim));
             // os_B << col << "\n";
             for(int k=0; k < factorDim; ++k)

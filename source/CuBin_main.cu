@@ -67,7 +67,7 @@ int main(int argc, char **argv) {
 
     // Discard first 100000 entries of PRNG
     for (int i = 0; i < 100000; i++)
-        fast_kiss32(&state);
+        fast_kiss32(state);
     
     int height, width;
     float density;
@@ -91,13 +91,13 @@ int main(int argc, char **argv) {
 
     // Initialize Ab, Bb bitvector matrices
     vector<my_bit_vector_t> A_vec, B_vec;
-    initializeFactors(A_vec, B_vec, height, width, factorDim, density, &state);
+    initializeFactors(A_vec, B_vec, height, width, factorDim, density, state);
 
     // computeDistanceCPU(A_vec, B_vec, C0_vec, height, width);
     // writeToFiles(filename + "_start", A_vec, B_vec, height, width, factorDim);
 
     // copy matrices to GPU and run optimization
-    auto cubin = CuBin<my_bit_vector_t>(A_vec, B_vec, C0_vec, factorDim);
+    auto cubin = CuBin<my_bit_vector_t>(A_vec, B_vec, C0_vec, factorDim, density);
     int distance = cubin.getDistance();
     cubin.verifyDistance();
     TIMERSTART(GPUKERNELLOOP)
@@ -109,7 +109,7 @@ int main(int argc, char **argv) {
     cubin.clear();
 
     computeDistanceCPU(A_vec, B_vec, C0_vec, height, width);
-    // writeToFiles(filename + "_end", A_vec, B_vec, height, width, factorDim);
+    writeToFiles(filename + "_end", A_vec, B_vec, height, width, factorDim);
 
     vector<coo> C = computeProduct(A_vec, B_vec, height, width);
     cout << "Nonzeros in product: " << C.size() << endl;

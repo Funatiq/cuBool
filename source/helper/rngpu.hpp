@@ -68,9 +68,9 @@ struct lcg_state32_t{
 };
 
 INLINE_QUALIFIERS
-uint32_t lcg32(lcg_state32_t * state) {
-    state->x = 314527869*state->x+1234567;
-    return state->x;
+uint32_t lcg32(lcg_state32_t &state) {
+    state.x = 314527869*state.x+1234567;
+    return state.x;
 }
 
 template <uint32_t num_iters=8> INLINE_QUALIFIERS
@@ -97,27 +97,27 @@ struct kiss_state32_t{
 };
 
 INLINE_QUALIFIERS
-uint32_t kiss32(kiss_state32_t * state) {
+uint32_t kiss32(kiss_state32_t &state) {
 
     // lcg
-    state->x = 314527869*state->x+1234567;
+    state.x = 314527869*state.x+1234567;
 
     // xorshift
-    state->y ^= state->y << 5;
-    state->y ^= state->y >> 7;
-    state->y ^= state->y << 22;
+    state.y ^= state.y << 5;
+    state.y ^= state.y >> 7;
+    state.y ^= state.y << 22;
 
     // carry and multiply
-    uint64_t t = 4294584393ULL*state->z+state->w;
-    state->w = t;
-    state->w = t >> 32;
+    uint64_t t = 4294584393ULL*state.z+state.w;
+    state.w = t;
+    state.w = t >> 32;
 
     // combine
-    return state->x+state->y+state->z;
+    return state.x+state.y+state.z;
 }
 
 template <uint32_t num_iters=8> INLINE_QUALIFIERS
-kiss_state32_t get_initial_kiss_state32(uint32_t seed) {
+kiss_state32_t get_initial_kiss_state32(const uint32_t seed) {
 
     kiss_state32_t state;
 
@@ -145,24 +145,24 @@ struct fast_kiss_state32_t{
 };
 
 INLINE_QUALIFIERS
-uint32_t fast_kiss32(fast_kiss_state32_t * state) {
+uint32_t fast_kiss32(fast_kiss_state32_t &state) {
 
-    state->y ^= state->y << 5;
-    state->y ^= state->y >> 7;
-    state->y ^= state->y << 22;
+    state.y ^= state.y << 5;
+    state.y ^= state.y >> 7;
+    state.y ^= state.y << 22;
 
-    int32_t t = state->z+state->w+state->c;
-    state->z  = state->w;
-    state->c  = t < 0;
-    state->w  = t & 2147483647;
-    state->x += 1411392427;
+    int32_t t = state.z+state.w+state.c;
+    state.z  = state.w;
+    state.c  = t < 0;
+    state.w  = t & 2147483647;
+    state.x += 1411392427;
 
     // combine
-    return state->x+state->y+state->w;
+    return state.x+state.y+state.w;
 }
 
 template <uint32_t num_iters=8> INLINE_QUALIFIERS
-fast_kiss_state32_t get_initial_fast_kiss_state32(uint32_t seed) {
+fast_kiss_state32_t get_initial_fast_kiss_state32(const uint32_t seed) {
 
     fast_kiss_state32_t state;
 
@@ -194,16 +194,16 @@ struct xorwow_state32_t{
 };
 
 INLINE_QUALIFIERS
-uint32_t xorwow32(xorwow_state32_t * state) {
+uint32_t xorwow32(xorwow_state32_t &state) {
     
-    uint32_t t = (state->x^(state->x>>2));
-    state->x = state->y;
-    state->y = state->z;
-    state->z = state->w;
-    state->v = (state->v^(state->v<<4))^(t^(t<<1));
-    state->d = state->d+362437;
+    uint32_t t = (state.x^(state.x>>2));
+    state.x = state.y;
+    state.y = state.z;
+    state.z = state.w;
+    state.v = (state.v^(state.v<<4))^(t^(t<<1));
+    state.d = state.d+362437;
 
-    return state->v+state->d;
+    return state.v+state.d;
 }
 
 template <uint32_t num_iters=8> INLINE_QUALIFIERS
