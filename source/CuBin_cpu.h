@@ -20,7 +20,7 @@ void computeDistanceCPU(const vector<uint32_t> &Ab,
 
             const int vecId = i / 32 * width + j;
             const int vecLane = i % 32;
-            const int truthEntry = (Cb[vecId] >> (32 - 1 - vecLane)) & 1;
+            const int truthEntry = (Cb[vecId] >> vecLane) & 1;
 
             const int error_ij = lineSum ^ truthEntry;
             // if(error_ij != 0 && error_ij != 1)

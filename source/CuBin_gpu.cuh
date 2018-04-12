@@ -18,19 +18,19 @@ uint32_t get_flip_mask_many(const uint8_t factorDim, fast_kiss_state32_t state, 
     for(int i = 0; i < rand_depth; ++i) {
         bit_flip_mask &= fast_kiss32(state);
     }
-    bit_flip_mask &= FULLMASK << (32-factorDim);
+    bit_flip_mask &= FULLMASK >> (32-factorDim);
     return bit_flip_mask;
 }
 
 __inline__ __device__
 uint32_t get_flip_mask_all(const uint8_t factorDim) {
-    return FULLMASK << (32-factorDim);
+    return FULLMASK >> (32-factorDim);
 }
 
 __inline__ __device__
 uint32_t get_flip_mask_one(const uint8_t factorDim, fast_kiss_state32_t state) {
     const uint32_t lane = fast_kiss32(state) % factorDim;
-    return 1 << (32 - 1 - lane);
+    return 1 << lane;
 }
 
 __inline__ __device__
@@ -124,7 +124,7 @@ void computeDistanceRows(const bit_vector_t * __restrict__ Ab,
 
             const int vecId = i / 32 * padded_width + j;
             const int vecLane = i % 32;
-            const int C_ij = (Cb[vecId] >> (32 - vecLane - 1)) & 1;
+            const int C_ij = (Cb[vecId] >> vecLane) & 1;
 
             error_thread += error_measure(product, C_ij, inverse_density);
         }
@@ -168,7 +168,6 @@ void computeDistanceRowsShared(const bit_vector_t * __restrict__ Ab,
     const int vecFirst = vecRow * padded_width;
     const int vecLane = i % 32;
     const int col_in_tile = warpLane;
-    const int shift = (32 - vecLane - 1);
     const int padded_width_blocks = SDIV(width, blockSize) * blockSize;
     int error_thread = 0;
     for (int j = threadIdx.x; j < padded_width_blocks; j += blockSize) {
@@ -182,8 +181,8 @@ void computeDistanceRowsShared(const bit_vector_t * __restrict__ Ab,
                 const bit_vector_t B_j = B_block[w*warpSize + warpLane];
 
                 // const int vecId = vecFirst + j/(blockSize)*(blockSize) + w*warpSize + warpLane;
-                // const int C_ij = (Cb[vecId] >> shift) & 1;
-                const int C_ij = (C_block[w*warpSize + col_in_tile] >> shift) & 1;
+                // const int C_ij = (Cb[vecId] >> vecLane) & 1;
+                const int C_ij = (C_block[w*warpSize + col_in_tile] >> vecLane) & 1;
 
                 const int product = (B_j & A_i) ? 1 : 0;
 
@@ -229,7 +228,6 @@ void computeDistanceRowsShared(const float * __restrict__ A,
     const int vecRow = i / 32;
     const int vecFirst = vecRow * padded_width;
     const int vecLane = i % 32;
-    const int shift = (32 - vecLane - 1);    
     int error_warp = 0;
     for (int j_chunk = 0; j_chunk < padded_width; j_chunk += CHUNK_SIZE) {
         #pragma unroll
@@ -249,7 +247,7 @@ void computeDistanceRowsShared(const float * __restrict__ A,
                 // int product = __any_sync(dim_mask, A_i_k && (B[j*warpSize + k] > 0.5f)) ? 1 : 0;
                 const int product = __any_sync(dim_mask, A_i_k && (B_block[j_local][k] > 0.5f)) ? 1 : 0;
 
-                const int C_ij = (C_block[j_local] >> shift) & 1;
+                const int C_ij = (C_block[j_local] >> vecLane) & 1;
 
                 error_warp += error_measure(product, C_ij, inverse_density);
             }
@@ -323,8 +321,7 @@ void computeDistanceColsShared(const float * __restrict__ A,
 
                 const int i = i_chunk + i_local;
                 const int vecLane = i % 32;
-                const int shift = (32 - vecLane - 1);
-                const int C_ij = (C_block[warpIdIntern] >> shift) & 1;
+                const int C_ij = (C_block[warpIdIntern] >> vecLane) & 1;
 
                 error_warp += error_measure(product, C_ij, inverse_density);
             }
@@ -393,7 +390,6 @@ vectorMatrixMultCompareRowWarpShared(bit_vector_t *A,
     const int vecFirst = vecRow * padded_width;
     const int vecLane = i % 32;
     const int col_in_tile = warpLane;
-    const int shift = (32 - vecLane - 1);
     const int padded_width_blocks = SDIV(width, WARPSPERBLOCK*32) * WARPSPERBLOCK*32;
     int error_thread = 0;
     for (int j = threadIdx.x; j < padded_width_blocks; j += WARPSPERBLOCK*32) {
@@ -405,10 +401,10 @@ vectorMatrixMultCompareRowWarpShared(bit_vector_t *A,
             #pragma unroll
             for(int w = 0; w < WARPSPERBLOCK; ++w) {
                 const bit_vector_t B_j = B_block[w*warpSize + warpLane];
-                const int C_ij = (C_block[w*warpSize + col_in_tile] >> shift) & 1;
+                const int C_ij = (C_block[w*warpSize + col_in_tile] >> vecLane) & 1;
                 // int col = j / blockDim.x * blockDim.x + w*warpSize + warpLane;
                 // bit_vector_t B_j = B[col];
-                // int C_ij = (C[vecFirst + col] >> shift) & 1;
+                // int C_ij = (C[vecFirst + col] >> vecLane) & 1;
 
                 const int product_new = (B_j & A_i_changed) ? 1 : 0;
                 const int product_old = (B_j & A_i        ) ? 1 : 0;
@@ -485,7 +481,6 @@ vectorMatrixMultCompareColWarpShared(const bit_vector_t * __restrict__ A,
     const int vecLane = warpLane;
     const int col_in_tile = j % 32;
     const int colFirst = j / 32 * 32;
-    const int shift = (32 - vecLane - 1);
     const int padded_height_blocks = SDIV(height, WARPSPERBLOCK*32) * WARPSPERBLOCK*32;
     for (int i = threadIdx.x; i < padded_height_blocks; i += WARPSPERBLOCK*32) {
         A_block[threadIdx.x] = (i < height) ? A[i] : 0;
@@ -498,11 +493,11 @@ vectorMatrixMultCompareColWarpShared(const bit_vector_t * __restrict__ A,
             #pragma unroll
             for(int w = 0; w < WARPSPERBLOCK; ++w) {
                 const bit_vector_t A_i = A_block[w*warpSize + warpLane];
-                const int C_ij = (C_block[w*warpSize + col_in_tile] >> shift) & 1;
+                const int C_ij = (C_block[w*warpSize + col_in_tile] >> vecLane) & 1;
 
                 // int row = i / blockDim.x * blockDim.x + w*warpSize + warpLane;
                 // bit_vector_t A_i = (row < height) ? A[row] : 0;
-                // int C_ij = (C[vecFirst + col_in_tile] >> shift) & 1;
+                // int C_ij = (C[vecFirst + col_in_tile] >> vecLane) & 1;
 
                 const int product_new = (A_i & B_j_changed) ? 1 : 0;
                 const int product_old = (A_i & B_j        ) ? 1 : 0;
@@ -594,7 +589,6 @@ vectorMatrixMultCompareRowWarpShared(float *A,
     const int vecRow = i / 32;
     const int vecFirst = vecRow * padded_width;
     const int vecLane = i % 32;
-    const int shift = (32 - vecLane - 1);
     int error_warp = 0;
     for (int j_chunk = 0; j_chunk < padded_width; j_chunk += CHUNK_SIZE) {
         #pragma unroll
@@ -615,7 +609,7 @@ vectorMatrixMultCompareRowWarpShared(float *A,
                 const int product_old = __any_sync(dim_mask, A_i_k && B_j_k) ? 1 : 0;
                 const int product_new = __any_sync(dim_mask, A_i_k_changed && B_j_k) ? 1 : 0;
 
-                const int C_ij = (C_block[j_local] >> shift) & 1;
+                const int C_ij = (C_block[j_local] >> vecLane) & 1;
 
                 error_warp += error_measure(product_new, C_ij, inverse_density)
                             - error_measure(product_old, C_ij, inverse_density);
@@ -709,10 +703,9 @@ vectorMatrixMultCompareColWarpShared(const float * __restrict__ A,
 
                 const int i = i_chunk + i_local;
                 const int vecLane = i % 32;
-                const int shift = (32 - vecLane - 1);
-                const int C_ij = (C_block[warpIdIntern] >> shift) & 1;
-                // const int C_ij = (C_warp >> shift) & 1;
-                // const int C_ij = (Cb[i_chunk/32*padded_width+j] >> shift) & 1;
+                const int C_ij = (C_block[warpIdIntern] >> vecLane) & 1;
+                // const int C_ij = (C_warp >> vecLane) & 1;
+                // const int C_ij = (Cb[i_chunk/32*padded_width+j] >> vecLane) & 1;
 
                 error_warp += error_measure(product_new, C_ij, inverse_density)
                             - error_measure(product_old, C_ij, inverse_density);

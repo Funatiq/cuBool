@@ -21,7 +21,7 @@ void generate_random_matrix(const int height, const int width, const uint8_t fac
                             vector<uint32_t> &Ab, vector<uint32_t> &Bb, vector<uint32_t> &C0b,
                             float &density)
 {
-    uint32_t bit_vector_mask = uint32_t(~0) << (32-factorDim);
+    uint32_t bit_vector_mask = uint32_t(~0) >> (32-factorDim);
 
     Ab.clear();
     Ab.resize(height, bit_vector_mask);
@@ -60,7 +60,7 @@ void generate_random_matrix(const int height, const int width, const uint8_t fac
                 int vecId = i / 32 * width + j;
                 int vecLane = i % 32;
 
-                C0b[vecId] |= 1 << (32 - 1 - vecLane);
+                C0b[vecId] |= 1 << vecLane;
 
                 ++nonzeroelements;
             }
@@ -80,7 +80,7 @@ void generate_random_matrix(const int height, const int width, const uint8_t fac
                             vector<float> &A, vector<float> &B, vector<uint32_t> &C0b,
                             float &density)
 {
-    uint32_t bit_vector_mask = uint32_t(~0) << (32-factorDim);
+    uint32_t bit_vector_mask = uint32_t(~0) >> (32-factorDim);
     
     A.clear();
     A.resize(height * factorDim, 0);
@@ -95,14 +95,14 @@ void generate_random_matrix(const int height, const int width, const uint8_t fac
         for(int kiss = 0; kiss < num_kiss; ++kiss)
             mask &= fast_kiss32(state);
         for(int k=0; k < factorDim; ++k)
-            A[i * factorDim + k] = (mask >> 32 - 1 - k) & 1 ? 1 : 0;
+            A[i * factorDim + k] = (mask >> k) & 1 ? 1 : 0;
     }
     for(int j=0; j < width; ++j) {
         uint32_t mask = bit_vector_mask;
         for(int kiss = 0; kiss < num_kiss; ++kiss)
             mask &= fast_kiss32(state);
         for(int k=0; k < factorDim; ++k)
-            B[j * factorDim + k] = (mask >> 32 - 1 - k) & 1 ? 1 : 0;
+            B[j * factorDim + k] = (mask >> k) & 1 ? 1 : 0;
     }
 
     // float threshold = 1.0f;
@@ -137,7 +137,7 @@ void generate_random_matrix(const int height, const int width, const uint8_t fac
                     int vecId = i / 32 * width + j;
                     int vecLane = i % 32;
 
-                    C0b[vecId] |= 1 << (32 - 1 - vecLane);
+                    C0b[vecId] |= 1 << vecLane;
 
                     ++nonzeroelements;
                     break;
@@ -180,7 +180,7 @@ void readInputFileData(const string filename,
         is >> r >> c;
         int vecId = r / 32 * width + c;
         int vecLane = r % 32;
-        C0b[vecId] |= 1 << 32 - vecLane - 1;
+        C0b[vecId] |= 1 << vecLane;
         nonzeroelements++;
     }
     
@@ -212,11 +212,11 @@ void initializeFactors( vector<uint32_t> &Ab, vector<uint32_t> &Bb,
 
     // Initialize A and B
     for (int i = 0; i < height; i++) {
-        Ab[i] = fast_kiss32(state) << (32-factorDim);
+        Ab[i] = fast_kiss32(state) >> (32-factorDim);
     }
 
     for (int j = 0; j < width; j++) {
-        Bb[j] = fast_kiss32(state) << (32-factorDim);
+        Bb[j] = fast_kiss32(state) >> (32-factorDim);
     }
     
     printf("Initialization of A and B complete\n");
@@ -251,7 +251,7 @@ void initializeFactors2( vector<uint32_t> &Ab, vector<uint32_t> &Bb,
                                         < density;
                                         break;
             }
-            if (threshold) Ab[i] |= 1 << (32 - j - 1);
+            if (threshold) Ab[i] |= 1 << j;
         }
     }
 
@@ -269,7 +269,7 @@ void initializeFactors2( vector<uint32_t> &Ab, vector<uint32_t> &Bb,
                                         < density;
                                         break;
             }
-            if (threshold) Bb[i] |= 1 << (32 - j - 1);
+            if (threshold) Bb[i] |= 1 << j;
         }
     }
     
@@ -396,7 +396,7 @@ void writeToFiles(const string filename,
             // bitset<32> row(Ab[i] >> (32 - factorDim));
             // os_A << row << "\n";
             for(int k=0; k < factorDim; ++k)
-                os_A << ((Ab[i] >> 32 - 1 - k) & 1 ? 1 : 0);
+                os_A << ((Ab[i] >> k) & 1 ? 1 : 0);
             os_A << "\n";
         }
         os_A.close();
@@ -417,7 +417,7 @@ void writeToFiles(const string filename,
             // bitset<32> col(Bb[j] >> (32 - factorDim));
             // os_B << col << "\n";
             for(int k=0; k < factorDim; ++k)
-                os_B << ((Bb[j] >> 32 - 1 - k) & 1 ? 1 : 0);
+                os_B << ((Bb[j] >> k) & 1 ? 1 : 0);
             os_B << "\n";
         }
         os_B.close();
