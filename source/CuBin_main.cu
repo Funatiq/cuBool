@@ -15,8 +15,8 @@ using namespace std;
 
 using my_bit_vector_t = uint32_t; // only tested uint32_t
 
-using my_cubin = CuBin<my_bit_vector_t>;
-// using my_cubin = Cubin_CPU<my_bit_vector_t>;
+// using my_cubin = CuBin<my_bit_vector_t>;
+using my_cubin = Cubin_CPU<my_bit_vector_t>;
 
 int main(int argc, char **argv) {
     mc::args_parser args{argc, argv};

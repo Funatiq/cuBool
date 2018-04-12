@@ -47,7 +47,8 @@ int vectorMatrixMultCompareRowCPU(vector<bit_vector_t> &Ab,
 {
     int error_update = 0;
 
-    #pragma omp parallel for reduction(+:error_update)
+    #pragma omp for
+    // #pragma omp parallel for reduction(+:error_update)
     for(int id=0; id < numrows; ++id) {
         const int i = (startrow + id) % height;
 
@@ -96,7 +97,8 @@ int vectorMatrixMultCompareColCPU(const vector<bit_vector_t> &Ab,
 {
     int error_update = 0;
 
-    #pragma omp parallel for reduction(+:error_update)
+    #pragma omp for
+    // #pragma omp parallel for reduction(+:error_update)
     for(int id=0; id < numcols; ++id) {
         const int j = (startcol + id) % width;
 
@@ -324,42 +326,58 @@ public:
         size_t iteration = 0;
         size_t stuckIterations = 0;
         auto distancePrev = distance_;
+        int lineToBeChanged;
+        uint32_t cpuSeed;
+        #pragma omp parallel private(iteration)
         while( distance_ > config.distanceThreshold
                 && iteration++ < config.maxIterations
                 && temperature > config.tempEnd
                 && stuckIterations < config.stuckIterationsBeforeBreak)
         {
             // Change rows
-            int lineToBeChanged = (fast_kiss32(state) % height_) / WARPSPERBLOCK * WARPSPERBLOCK;
-            uint32_t cpuSeed = fast_kiss32(state) + iteration;
+            #pragma omp single
+            {
+                lineToBeChanged = (fast_kiss32(state) % height_) / WARPSPERBLOCK * WARPSPERBLOCK;
+                cpuSeed = fast_kiss32(state) + iteration;
+            }
 
-            distance_ += vectorMatrixMultCompareRowCPU(d_A, d_B, d_C, height_, width_, factorDim_,
+            int distance_update = vectorMatrixMultCompareRowCPU(d_A, d_B, d_C, height_, width_, factorDim_,
                                           lineToBeChanged, min(linesAtOnce, height_), cpuSeed, temperature/10,
                                           config.flipManyChance, config.flipManyDepth, inverse_density_);
 
             // Change cols
-            lineToBeChanged = (fast_kiss32(state) % width_) / WARPSPERBLOCK * WARPSPERBLOCK;
-            cpuSeed = fast_kiss32(state) + iteration;
+            #pragma omp single
+            {
+                lineToBeChanged = (fast_kiss32(state) % width_) / WARPSPERBLOCK * WARPSPERBLOCK;
+                cpuSeed = fast_kiss32(state) + iteration;
+            }
 
-            distance_ += vectorMatrixMultCompareColCPU(d_A, d_B, d_C, height_, width_, factorDim_,
+            distance_update += vectorMatrixMultCompareColCPU(d_A, d_B, d_C, height_, width_, factorDim_,
                                           lineToBeChanged, min(linesAtOnce, height_), cpuSeed, temperature/10,
                                           config.flipManyChance, config.flipManyDepth, inverse_density_);
 
-            if(config.verbosity > 0 && iteration % config.distanceShowEvery == 0) {
-                std::cout << "Iteration: " << iteration
-                          << "\tabs_err: " << distance_
-                          << "\trel_err: " << (float) distance_ / (height_*width_)
-                          << "\ttemp: " << temperature;
-                std::cout << std::endl;
+            #pragma omp atomic
+            distance_ += distance_update;
+
+            #pragma omp single
+            {
+                if(config.verbosity > 0 && iteration % config.distanceShowEvery == 0) {
+                    std::cout << "Iteration: " << iteration
+                              << "\tabs_err: " << distance_
+                              << "\trel_err: " << (float) distance_ / (height_*width_)
+                              << "\ttemp: " << temperature;
+                    std::cout << std::endl;
+                }
+
+                if(iteration % config.tempStep == 0) {
+                    temperature *= config.tempFactor;
+                }
+                if(distance_ == distancePrev)
+                    stuckIterations++;
+                else
+                    stuckIterations = 0;
+                distancePrev = distance_;
             }
-            if(iteration % config.tempStep == 0) {
-                temperature *= config.tempFactor;
-            }
-            if(distance_ == distancePrev)
-                stuckIterations++;
-            else
-                stuckIterations = 0;
-            distancePrev = distance_;
         }
 
         if(config.verbosity > 0) {
