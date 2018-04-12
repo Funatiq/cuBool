@@ -11,7 +11,7 @@
 #include "helper/cuda_helpers.cuh"
 
 // uint32_t vector masks --------------------------------------------------------
-__inline__ __device__
+__inline__ __device__ __host__
 uint32_t get_flip_mask_many(const uint8_t factorDim, fast_kiss_state32_t state, const uint32_t rand_depth) {
     uint32_t bit_flip_mask = FULLMASK;
     #pragma unroll
@@ -22,18 +22,18 @@ uint32_t get_flip_mask_many(const uint8_t factorDim, fast_kiss_state32_t state, 
     return bit_flip_mask;
 }
 
-__inline__ __device__
+__inline__ __device__ __host__
 uint32_t get_flip_mask_all(const uint8_t factorDim) {
     return FULLMASK >> (32-factorDim);
 }
 
-__inline__ __device__
+__inline__ __device__ __host__
 uint32_t get_flip_mask_one(const uint8_t factorDim, fast_kiss_state32_t state) {
     const uint32_t lane = fast_kiss32(state) % factorDim;
     return 1 << lane;
 }
 
-__inline__ __device__
+__inline__ __device__ __host__
 uint32_t get_flip_mask(const uint8_t factorDim, fast_kiss_state32_t state,
                        const float flipManyChance,
                        const uint32_t flipManyDepth) {
@@ -69,7 +69,7 @@ float get_float_update(const uint8_t factorDim, fast_kiss_state32_t state, const
 }
 
 // Metropolis–Hastings algorithm
-__inline__ __device__
+__inline__ __device__ __host__
 bool metro(fast_kiss_state32_t state, const int error, const float temperature, const int error_max) {
     if(error <= 0)
         return true;
@@ -82,17 +82,17 @@ bool metro(fast_kiss_state32_t state, const int error, const float temperature, 
 }
 
 // error measures ---------------------------------------------------------------
-__inline__ __device__
+__inline__ __device__ __host__
 int error_measure(const int test, const int truth, const int inverse_density = 0) {
     return test ^ truth;
 }
 
-__inline__ __device__
+__inline__ __device__ __host__
 int error_measure2(const int test, const int truth, const int inverse_density) {
     return (truth == 1) ? inverse_density * (test ^ truth) : (test ^ truth);
 }
 
-__inline__ __device__
+__inline__ __device__ __host__
 int error_measure3(const int test, const int truth, const int inverse_density) {
     return (test == 1) ? inverse_density/2 * (test ^ truth) : (test ^ truth);
 }
@@ -360,7 +360,7 @@ vectorMatrixMultCompareRowWarpShared(bit_vector_t *A,
                                      const uint32_t seed, 
                                      const float temperature,
                                      const float flipManyChance,
-                                     const uint32_t flipDepth,
+                                     const uint32_t flipManyDepth,
                                      const int inverse_density)
 {
     __shared__ bit_vector_t B_block[ 32 * WARPSPERBLOCK ];
@@ -382,7 +382,7 @@ vectorMatrixMultCompareRowWarpShared(bit_vector_t *A,
     if (i < height) {
         state = get_initial_fast_kiss_state32(seed + warpId);
 
-        A_i_changed = A_i ^ get_flip_mask(factorDim, state, flipManyChance, flipDepth);
+        A_i_changed = A_i ^ get_flip_mask(factorDim, state, flipManyChance, flipManyDepth);
     }
     // A_i_changed = __shfl_sync(FULLMASK, A_i_changed, 0);
     
@@ -555,7 +555,7 @@ vectorMatrixMultCompareRowWarpShared(float *A,
                                      const uint32_t seed, 
                                      const float temperature,
                                      const float flipManyChance,
-                                     const uint32_t flipDepth,
+                                     const uint32_t flipManyDepth,
                                      const int inverse_density)
 {
     // const int warpId = (threadIdx.x + blockIdx.x * blockDim.x) / warpSize;

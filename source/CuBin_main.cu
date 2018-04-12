@@ -15,6 +15,9 @@ using namespace std;
 
 using my_bit_vector_t = uint32_t; // only tested uint32_t
 
+using my_cubin = CuBin<my_bit_vector_t>;
+// using my_cubin = Cubin_CPU<my_bit_vector_t>;
+
 int main(int argc, char **argv) {
     mc::args_parser args{argc, argv};
 
@@ -26,7 +29,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    CuBin<my_bit_vector_t>::CuBin_config config;
+    my_cubin::CuBin_config config;
     config.verbosity = args.get<size_t>({"v","verbosity"}, config.verbosity);
     uint8_t factorDim = args.get<uint8_t>({"k","dim","dimension","factordim"}, 20);
     config.linesAtOnce = args.get<size_t>({"l","lines","linesperkernel"}, config.linesAtOnce);
@@ -97,7 +100,8 @@ int main(int argc, char **argv) {
     // writeToFiles(filename + "_start", A_vec, B_vec, height, width, factorDim);
 
     // copy matrices to GPU and run optimization
-    auto cubin = CuBin<my_bit_vector_t>(A_vec, B_vec, C0_vec, factorDim, density);
+    auto cubin = my_cubin(A_vec, B_vec, C0_vec, factorDim, density);
+    // auto cubin = my_cubin(A_vec, B_vec, C0_vec, factorDim, density);
     int distance = cubin.getDistance();
     cubin.verifyDistance();
     TIMERSTART(GPUKERNELLOOP)
@@ -108,10 +112,11 @@ int main(int argc, char **argv) {
     cubin.getFactors(A_vec, B_vec);
     cubin.clear();
 
-    computeDistanceCPU(A_vec, B_vec, C0_vec, height, width);
+    int error = computeDistanceCPU(A_vec, B_vec, C0_vec, height, width);
+    std::cout << "cpu error: " << error << std::endl;
     writeToFiles(filename + "_end", A_vec, B_vec, height, width, factorDim);
 
-    vector<coo> C = computeProduct(A_vec, B_vec, height, width);
+    auto C = computeProductCOO(A_vec, B_vec, height, width);
     cout << "Nonzeros in product: " << C.size() << endl;
     return 0;
 }
