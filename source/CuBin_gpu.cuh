@@ -740,7 +740,10 @@ public:
           const factor_matrix_t& B,
           const bit_matrix_t& C,
           const uint8_t factorDim = 20,
-          const float density = 0.99f) {
+          const float density = 0.99f)
+    {
+        cout << "~~~ GPU CuBin ~~~" << endl; 
+
         int device_id = 0;
         cudaDeviceProp prop;
         cudaGetDeviceProperties(&prop, device_id);

@@ -171,7 +171,9 @@ public:
           const factor_matrix_t& B,
           const bit_matrix_t& C,
           const uint8_t factorDim = 20,
-          const float density = 0.99f) {
+          const float density = 0.99f)
+    {
+        cout << "~~~ CPU CuBin ~~~" << endl; 
 
         if(factorDim > 32) {
             std::cerr << "Factor dimension too big! Maximum is 32." << endl;
