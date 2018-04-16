@@ -210,14 +210,13 @@ void initializeFactors( vector<uint32_t> &Ab, vector<uint32_t> &Bb,
     Bb.clear();
     Bb.resize(width, 0);
 
-    // Initialize A and B
-    for (int i = 0; i < height; i++) {
-        Ab[i] = fast_kiss32(state) >> (32-factorDim);
-    }
+    // for (int i = 0; i < height; i++) {
+    //     Ab[i] = fast_kiss32(state) >> (32-factorDim);
+    // }
 
-    for (int j = 0; j < width; j++) {
-        Bb[j] = fast_kiss32(state) >> (32-factorDim);
-    }
+    // for (int j = 0; j < width; j++) {
+    //     Bb[j] = fast_kiss32(state) >> (32-factorDim);
+    // }
     
     printf("Initialization of A and B complete\n");
     printf("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");

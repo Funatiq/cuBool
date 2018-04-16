@@ -13,12 +13,12 @@
 // uint32_t vector masks --------------------------------------------------------
 __inline__ __device__ __host__
 uint32_t get_flip_mask_many(const uint8_t factorDim, fast_kiss_state32_t state, const uint32_t rand_depth) {
-    uint32_t bit_flip_mask = FULLMASK;
+    uint32_t bit_flip_mask = FULLMASK >> (32-factorDim);
     #pragma unroll
     for(int i = 0; i < rand_depth; ++i) {
         bit_flip_mask &= fast_kiss32(state);
     }
-    bit_flip_mask &= FULLMASK >> (32-factorDim);
+    // bit_flip_mask &= FULLMASK >> (32-factorDim);
     return bit_flip_mask;
 }
 
@@ -82,20 +82,32 @@ bool metro(fast_kiss_state32_t state, const int error, const float temperature, 
 }
 
 // error measures ---------------------------------------------------------------
+template<typename error_t>
 __inline__ __device__ __host__
-int error_measure(const int test, const int truth, const int inverse_density = 0) {
-    return test ^ truth;
+error_t error_measure(const int test, const int truth, const error_t weigth) {
+    return (truth == 1) ? (weigth-1) * (test ^ truth) : (test ^ truth);
 }
 
+template<typename error_t>
 __inline__ __device__ __host__
-int error_measure2(const int test, const int truth, const int inverse_density) {
-    return (truth == 1) ? inverse_density * (test ^ truth) : (test ^ truth);
+error_t error_measure(const int test, const int truth, const error_t weigth_1, const error_t weigth_0) {
+    return (truth == 1) ? weigth_1 * (test ^ truth) : weigth_0 * (test ^ truth);
 }
 
-__inline__ __device__ __host__
-int error_measure3(const int test, const int truth, const int inverse_density) {
-    return (test == 1) ? inverse_density/2 * (test ^ truth) : (test ^ truth);
-}
+// __inline__ __device__ __host__
+// int error_measure(const int test, const int truth, const int inverse_density = 0) {
+//     return test ^ truth;
+// }
+
+// __inline__ __device__ __host__
+// int error_measure2(const int test, const int truth, const int inverse_density) {
+//     return (truth == 1) ? 4 * (test ^ truth) : (test ^ truth);
+// }
+
+// __inline__ __device__ __host__
+// int error_measure3(const int test, const int truth, const int inverse_density) {
+//     return (truth == 0) ? inverse_density * (test ^ truth) : (test ^ truth);
+// }
 
 // distance kernels ---------------------------------------------------------------
 template<typename bit_vector_t>

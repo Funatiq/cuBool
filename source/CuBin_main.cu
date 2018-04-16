@@ -83,7 +83,7 @@ int main(int argc, char **argv) {
         readInputFileData(filename, C0_vec, height, width, density);
     } else if (filename.compare("test") == 0) {
         height = 5000;
-        width = 5000;
+        width = 4000;
         // height = 5*1024;
         // width = 5*1024;
         generate_random_matrix(height, width, factorDim, 3, A0_vec, B0_vec, C0_vec, density);
@@ -96,13 +96,13 @@ int main(int argc, char **argv) {
     vector<my_bit_vector_t> A_vec, B_vec;
     initializeFactors(A_vec, B_vec, height, width, factorDim, density, state);
 
-    // computeDistanceCPU(A_vec, B_vec, C0_vec, height, width);
+    // computeHammingDistanceCPU(A_vec, B_vec, C0_vec, height, width);
     // writeToFiles(filename + "_start", A_vec, B_vec, height, width, factorDim);
 
     // copy matrices to GPU and run optimization
     auto cubin = my_cubin(A_vec, B_vec, C0_vec, factorDim, density);
     // auto cubin = my_cubin(A_vec, B_vec, C0_vec, factorDim, density);
-    int distance = cubin.getDistance();
+    auto distance = cubin.getDistance();
     cubin.verifyDistance();
     TIMERSTART(GPUKERNELLOOP)
     cubin.run(config);
@@ -112,12 +112,15 @@ int main(int argc, char **argv) {
     cubin.getFactors(A_vec, B_vec);
     cubin.clear();
 
-    int error = computeDistanceCPU(A_vec, B_vec, C0_vec, height, width);
-    std::cout << "cpu error: " << error << std::endl;
     writeToFiles(filename + "_end", A_vec, B_vec, height, width, factorDim);
+    
+    // auto error = computeHammingDistanceCPU(A_vec, B_vec, C0_vec, height, width);
+    // std::cout << "cpu error: " << error << std::endl;
 
-    auto C = computeProductCOO(A_vec, B_vec, height, width);
-    cout << "Nonzeros in product: " << C.size() << endl;
+    // auto C = computeProductCOO(A_vec, B_vec, height, width);
+    // cout << "Nonzeros in product: " << C.size() << endl;
+
+    computeErrorsCPU(A_vec, B_vec, C0_vec, height, width);
     return 0;
 }
 
