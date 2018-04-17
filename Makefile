@@ -21,5 +21,5 @@ debug: CuBin test_distance
 clean:
 	rm -f CuBin test_distance
 
-test_distance: tests/test_cubin_distance.cu $(HEADERS) 
-	nvcc tests/test_cubin_distance.cu $(FLAGS) -o test_distance
+test_distance: source_tests/test_cubin_distance.cu $(HEADERS)
+	nvcc source_tests/test_cubin_distance.cu $(FLAGS) -o test_distance
