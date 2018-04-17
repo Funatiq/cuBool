@@ -97,9 +97,12 @@ error_t computeDistanceCPU(const vector<bit_vector_t> &Ab,
             const int vecLane = i % 32;
             const int C_ij = (Cb[vecId] >> vecLane) & 1;
 
-            const error_t weight = weights_rows[i] + weights_cols[j];
+            // const error_t weight_average = (weights_rows[i] + weights_cols[j]) / 2;
 
-            error += error_measure(product, C_ij, weight);
+            const error_t weight = 1 / weights_rows[i] - 1 + 1 / weights_cols[j] - 1;
+            const error_t counterweight = 2;
+
+            error += error_measure(product, C_ij, weight, counterweight);
         }
     }
 
@@ -217,10 +220,10 @@ int vectorMatrixMultCompareLineCPU(vector<bit_vector_t> &Ab,
     error_t error_update = 0;
 
     // // const uint8_t numTests = factorDim+1;
-    const uint8_t numTests = factorDim;
+    // const uint8_t numTests = factorDim;
     // // const uint8_t numTests = 1;
-    bit_vector_t A_i_tests[numTests];
-    error_t error_tests[numTests];
+    // bit_vector_t A_i_tests[numTests];
+    // error_t error_tests[numTests];
 
     #pragma omp for
     // #pragma omp parallel for reduction(+:error_update)
@@ -231,55 +234,62 @@ int vectorMatrixMultCompareLineCPU(vector<bit_vector_t> &Ab,
         state = get_initial_fast_kiss_state32(seed + id);
 
         const bit_vector_t A_i = Ab[i];
-        // bit_vector_t A_i_changed = Ab[i] ^ get_flip_mask(factorDim, state, flipManyChance, flipManyDepth);
+        bit_vector_t A_i_changed = Ab[i] ^ get_flip_mask(factorDim, state, flipManyChance, flipManyDepth);
 
-        for(int k=0; k<factorDim; ++k) {
-            A_i_tests[k] = A_i ^ (1 << k);
-            error_tests[k] = 0;
+        // for(int k=0; k<factorDim; ++k) {
+        //     A_i_tests[k] = A_i ^ (1 << k);
+        //     error_tests[k] = 0;
             // A_i_tests[k] = A_i ^ get_flip_mask_many(factorDim, state, flipManyDepth);
         //     error_tests[k] = 0;
-        }
+        // }
         // A_i_tests[numTests] = A_i ^ get_flip_mask_many(factorDim, state, flipManyDepth);
         // A_i_tests[numTests] = fast_kiss32(state) >> (32 - factorDim);
         // error_tests[numTests] = 0;
 
-        // error_t error = 0;
+        error_t error = 0;
         for(int j=0; j < size_B; ++j) {
             const int vecId = transpose ? j / 32 * size_A + i : i / 32 * size_B + j;
             const int vecLane = transpose ? j % 32 : i % 32;
             const int C_ij = (Cb[vecId] >> vecLane) & 1;
             
             // const error_t weight = (weights_rows[i] + weights_cols[j]) / 2;
-            const error_t weight = weights_rows[i];
+            // const error_t weight = 1/weights_rows[i] - 1;
+            // const error_t counterweight = 1;
+            const error_t weight = 1 / weights_rows[i] - 1 + 1 / weights_cols[j] - 1;
+            const error_t counterweight = 2;
+
+            if(weight < 0 || counterweight < 0)
+                cout << "weight < 0" << endl;
 
             const int product_old = (A_i         & Bb[j]) ? 1 : 0;
-            // const int product_new = (A_i_changed & Bb[j]) ? 1 : 0;
+            const int product_new = (A_i_changed & Bb[j]) ? 1 : 0;
 
-            for(int k=0; k<numTests; ++k) {
-                const int product_new = (A_i_tests[k] & Bb[j]) ? 1 : 0;
+            // for(int k=0; k<numTests; ++k) {
+            //     const int product_new = (A_i_tests[k] & Bb[j]) ? 1 : 0;
 
-                error_tests[k] += error_measure(product_new, C_ij, weight)
-                                - error_measure(product_old, C_ij, weight);
-            }
+            //     error_tests[k] += error_measure(product_new, C_ij, weight)
+            //                     - error_measure(product_old, C_ij, weight);
+            // }
 
-            // error += error_measure(product_new, C_ij, weight)
-            //        - error_measure(product_old, C_ij, weight);
+            error += error_measure(product_new, C_ij, weight, counterweight)
+                   - error_measure(product_old, C_ij, weight, counterweight);
         }
 
-        error_t error = std::numeric_limits<float>::max();
-        bit_vector_t A_i_changed;
-        for(int k=0; k<numTests; ++k) {
-            if(error_tests[k] != 0 && error_tests[k] < error) {
-                error = error_tests[k];
-                A_i_changed = A_i_tests[k];
-            }
-        }
-        // if(error == INT_MAX) {
-        if(error > 0) {
-            const uint32_t k = fast_kiss32(state) % numTests;
-            A_i_changed = A_i_tests[k];
-            error = error_tests[k];
-        }
+        // error_t error = 0;
+        // bit_vector_t A_i_changed;
+        // for(int k=0; k<numTests; ++k) {
+        //     // if(error_tests[k] != 0 && error_tests[k] < error) {
+        //     if(error_tests[k] < error) {
+        //         error = error_tests[k];
+        //         A_i_changed = A_i_tests[k];
+        //     }
+        // }
+        // // if(error == INT_MAX) {
+        // if(error >= 0) {
+        //     const uint32_t k = fast_kiss32(state) % numTests;
+        //     A_i_changed = A_i_tests[k];
+        //     error = error_tests[k];
+        // }
 
         if (metro(state, error, temperature, size_B)) {
             Ab[i] = A_i_changed;
@@ -550,20 +560,23 @@ public:
         B_ = B;
         C_ = C;
 
-        inverse_density_rows_ = computeInverseDensitiesRows(C_, height_, width_);
-        inverse_density_cols_ = computeInverseDensitiesCols(C_, height_, width_);
+        // weights_rows_ = computeInverseDensitiesRows(C_, height_, width_);
+        // weights_cols_ = computeInverseDensitiesCols(C_, height_, width_);
+
+        weights_rows_ = computeDensitiesRows(C_, height_, width_);
+        weights_cols_ = computeDensitiesCols(C_, height_, width_);
 
         // for (int i = 0; i < height_; ++i) {
-        //     cout << inverse_density_rows_[i] << " ";
+        //     cout << weights_rows_[i] << " ";
         // }
         // cout << endl;
 
         // for (int j = 0; j < width_; ++j) {
-        //     cout << inverse_density_cols_[j] << " ";
+        //     cout << weights_cols_[j] << " ";
         // }
         // cout << endl;
 
-        distance_ = computeDistanceCPU(A_, B_, C_, height_, width_, inverse_density_rows_, inverse_density_cols_);
+        distance_ = computeDistanceCPU(A_, B_, C_, height_, width_, weights_rows_, weights_cols_);
 
         std::cout << "CuBin initialization complete." << endl;
 
@@ -586,7 +599,7 @@ public:
 
         my_error_t distance_proof;
 
-        distance_proof = computeDistanceCPU(A_, B_, C_, height_, width_, inverse_density_rows_, inverse_density_cols_);
+        distance_proof = computeDistanceCPU(A_, B_, C_, height_, width_, weights_rows_, weights_cols_);
 
         bool equal = fabs(distance_- distance_proof) < 1e-3; // std::numeric_limits<float>::epsilon();
         if(!equal) {
@@ -691,7 +704,7 @@ public:
             my_error_t distance_update = vectorMatrixMultCompareLineCPU<false>(A_, height_, B_, width_, C_, factorDim_,
                                           lineToBeChanged, min(linesAtOnce, height_), cpuSeed, temperature/10,
                                           config.flipManyChance, config.flipManyDepth,
-                                          inverse_density_rows_, inverse_density_cols_);
+                                          weights_rows_, weights_cols_);
             // int distance_update = vectorMatrixMultCompareRowCPU(A_, B_, C_, height_, width_, factorDim_,
             //                               lineToBeChanged, min(linesAtOnce, height_), cpuSeed, temperature/10,
             //                               config.flipManyChance, config.flipManyDepth, inverse_density_);
@@ -707,7 +720,7 @@ public:
             distance_update += vectorMatrixMultCompareLineCPU<true>(B_, width_, A_, height_, C_, factorDim_,
                                           lineToBeChanged, min(linesAtOnce, height_), cpuSeed, temperature/10,
                                           config.flipManyChance, config.flipManyDepth,
-                                          inverse_density_cols_, inverse_density_rows_);
+                                          weights_cols_, weights_rows_);
             // distance_update += vectorMatrixMultCompareColCPU(A_, B_, C_, height_, width_, factorDim_,
             //                               lineToBeChanged, min(linesAtOnce, height_), cpuSeed, temperature/10,
             //                               config.flipManyChance, config.flipManyDepth, inverse_density_);
@@ -721,7 +734,7 @@ public:
             {
                 int hamming;
                 if(iteration % config.distanceShowEvery == 0) {
-                    distance_ = computeDistanceCPU(A_, B_, C_, height_, width_, inverse_density_rows_, inverse_density_cols_);
+                    distance_ = computeDistanceCPU(A_, B_, C_, height_, width_, weights_rows_, weights_cols_);
                     hamming = computeHammingDistanceCPU(A_, B_, C_, height_, width_);
                 }
 
@@ -769,8 +782,8 @@ private:
     factor_matrix_t A_;
     factor_matrix_t B_;
     bit_matrix_t C_;
-    vector<my_error_t> inverse_density_rows_;
-    vector<my_error_t> inverse_density_cols_;
+    vector<my_error_t> weights_rows_;
+    vector<my_error_t> weights_cols_;
     // int inverse_density_;
     my_error_t distance_;
     // size_t height_padded;
