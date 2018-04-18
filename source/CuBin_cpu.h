@@ -76,6 +76,44 @@ void computeErrorsCPU(const vector<bit_vector_t> &Ab,
     std::cout << "total error: " << false_positives + false_negatives << endl;
 }
 
+template<typename bit_vector_t>
+float computeJaccardCPU(const vector<bit_vector_t> &Ab,
+                       const vector<bit_vector_t> &Bb,
+                       const vector<bit_vector_t> &Cb,
+                       const int height,
+                       const int width)
+{
+    float jaccard = 0;
+
+    #pragma omp parallel for reduction(+:jaccard)
+    for(int j=0; j < width; ++j) {
+        uint32_t B_j = Bb[j];
+        int true_positives = 0;
+        int false_positives = 0;
+        int false_negatives = 0;
+        for(int i=0; i < height; ++i) {
+            const int product = (Ab[i] & B_j) ? 1 : 0;
+
+            const int vecId = i / 32 * width + j;
+            const int vecLane = i % 32;
+            const int C_ij = (Cb[vecId] >> vecLane) & 1;
+
+            if(product) {
+                if(C_ij)
+                    true_positives++;
+                else
+                    false_positives++;
+            } else {
+                if(C_ij)
+                    false_negatives++;
+            }
+        }
+        jaccard += (float) true_positives / (true_positives + false_positives + false_negatives);
+    }
+
+    return jaccard;
+}
+
 template<typename bit_vector_t, typename error_t>
 error_t computeDistanceCPU(const vector<bit_vector_t> &Ab,
                            const vector<bit_vector_t> &Bb,
@@ -210,6 +248,66 @@ vector<error_t> computeInverseDensitiesCols(const vector<bit_vector_t> &Cb,
     }
 
     return inverse_density_cols;
+}
+
+template<bool transpose, typename bit_vector_t, typename error_t>
+int updateLinesJaccardCPU(vector<bit_vector_t> &Ab,
+                                   const int size_A,
+                                   const vector<bit_vector_t> &Bb,
+                                   const int size_B,
+                                   const vector<bit_vector_t> &Cb,
+                                   const uint8_t factorDim,
+                                   const int startline,
+                                   const int numlines,
+                                   const uint32_t seed, 
+                                   const float temperature,
+                                   const float flipManyChance,
+                                   const uint32_t flipManyDepth,
+                                   const vector<error_t>& weights_rows,
+                                   const vector<error_t>& weights_cols)
+{
+    error_t update = 0;
+
+    #pragma omp for
+    // #pragma omp parallel for reduction(+:update)
+    for(int id=0; id < numlines; ++id) {
+        const int i = (startline + id) % size_A;
+
+        fast_kiss_state32_t state;
+        state = get_initial_fast_kiss_state32(seed + id);
+
+        const bit_vector_t A_i = Ab[i];
+        bit_vector_t A_i_new = Ab[i] ^ get_flip_mask(factorDim, state, flipManyChance, flipManyDepth);
+        // bit_vector_t A_i_new = get_flip_mask(factorDim, state, flipManyChance, flipManyDepth);
+
+        int true_positives_old = 0;
+        int true_positives_new = 0;
+        int false_xs_old = 0;
+        int false_xs_new = 0;
+        for(int j=0; j < size_B; ++j) {
+            const int vecId = transpose ? j / 32 * size_A + i : i / 32 * size_B + j;
+            const int vecLane = transpose ? j % 32 : i % 32;
+            const int C_ij = (Cb[vecId] >> vecLane) & 1;
+
+            const int product_old = (A_i     & Bb[j]) ? 1 : 0;
+            const int product_new = (A_i_new & Bb[j]) ? 1 : 0;
+
+            true_positives_old += C_ij & product_old;
+            true_positives_new += C_ij & product_new;
+            false_xs_old       += C_ij ^ product_old;
+            false_xs_new       += C_ij ^ product_new;
+        }
+        const int jaccard_numerator = true_positives_old * false_xs_new - true_positives_new * false_xs_old;
+        // const int jaccard_numerator = true_positives_old * (true_positives_new + false_xs_new)
+                                    // - true_positives_new * (true_positives_old + false_xs_old);
+
+        if (metro(state, jaccard_numerator, temperature, size_B)) {
+            Ab[i] = A_i_new;
+            update += jaccard_numerator;
+        }
+    }
+
+    return update;
 }
 
 template<bool transpose, typename bit_vector_t, typename error_t>
@@ -551,7 +649,7 @@ public:
         size_t iteration = 0;
         size_t stuckIterations = 0;
         auto distancePrev = distance_;
-        error_t distance_update_sum;
+        my_error_t distance_update_sum = 0;
         int lineToBeChanged;
         uint32_t cpuSeed;
         #pragma omp parallel firstprivate(iteration)
@@ -567,13 +665,14 @@ public:
                 cpuSeed = fast_kiss32(state) + iteration;
             }
 
-            my_error_t distance_update = vectorMatrixMultCompareLineCPU<false>(A_, height_, B_, width_, C_, factorDim_,
+            // my_error_t distance_update = vectorMatrixMultCompareLineCPU<false>(A_, height_, B_, width_, C_, factorDim_,
+            //                               lineToBeChanged, min(linesAtOnce, height_), cpuSeed, temperature/10,
+            //                               config.flipManyChance, config.flipManyDepth,
+            //                               weights_rows_, weights_cols_);
+            my_error_t distance_update = updateLinesJaccardCPU<false>(A_, height_, B_, width_, C_, factorDim_,
                                           lineToBeChanged, min(linesAtOnce, height_), cpuSeed, temperature/10,
                                           config.flipManyChance, config.flipManyDepth,
                                           weights_rows_, weights_cols_);
-            // int distance_update = vectorMatrixMultCompareRowCPU(A_, B_, C_, height_, width_, factorDim_,
-            //                               lineToBeChanged, min(linesAtOnce, height_), cpuSeed, temperature/10,
-            //                               config.flipManyChance, config.flipManyDepth, inverse_density_);
             // implicit barrier
 
             // Change cols
@@ -583,17 +682,18 @@ public:
                 cpuSeed = fast_kiss32(state) + iteration;
             }
 
-            distance_update += vectorMatrixMultCompareLineCPU<true>(B_, width_, A_, height_, C_, factorDim_,
+            // distance_update += vectorMatrixMultCompareLineCPU<true>(B_, width_, A_, height_, C_, factorDim_,
+            //                               lineToBeChanged, min(linesAtOnce, height_), cpuSeed, temperature/10,
+            //                               config.flipManyChance, config.flipManyDepth,
+            //                               weights_cols_, weights_rows_);
+            distance_update += updateLinesJaccardCPU<true>(B_, width_, A_, height_, C_, factorDim_,
                                           lineToBeChanged, min(linesAtOnce, height_), cpuSeed, temperature/10,
                                           config.flipManyChance, config.flipManyDepth,
                                           weights_cols_, weights_rows_);
-            // distance_update += vectorMatrixMultCompareColCPU(A_, B_, C_, height_, width_, factorDim_,
-            //                               lineToBeChanged, min(linesAtOnce, height_), cpuSeed, temperature/10,
-            //                               config.flipManyChance, config.flipManyDepth, inverse_density_);
             // implicit barrier
 
-            #pragma omp reduction(+:distance_update_sum)
-            distance_update_sum = distance_update;
+            #pragma omp atomic
+            distance_update_sum += distance_update;
             #pragma omp barrier
 
             #pragma omp single
@@ -607,13 +707,14 @@ public:
 
                 if(config.verbosity > 0 && iteration % config.distanceShowEvery == 0) {
                     std::cout << "Iteration: " << iteration
-                              << "\tupdate: " << distance_update_sum
+                              << "\tupdate: " << distance_update_sum / config.distanceShowEvery
                               // << "\trel_err: " << (float) distance_ / (height_*width_)
                               << "\thamming: " << distance_
                               << "\ttemp: " << temperature;
                     std::cout << std::endl;
 
                     // std::cout << "\tseed: " << (int) cpuSeed << std::endl;
+                    distance_update_sum = 0;
                 }
                 if(iteration % config.tempStep == 0) {
                     temperature *= config.tempFactor;
