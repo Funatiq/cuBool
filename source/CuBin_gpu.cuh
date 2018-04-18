@@ -88,10 +88,16 @@ error_t error_measure(const int test, const int truth, const error_t weigth) {
     return (truth == 1) ? (weigth-1) * (test ^ truth) : (test ^ truth);
 }
 
+// template<typename error_t>
+// __inline__ __device__ __host__
+// error_t error_measure(const int test, const int truth, const error_t weigth_1, const error_t weigth_0) {
+//     return (truth == 1) ? weigth_1 * (test ^ truth) : weigth_0 * (test ^ truth);
+// }
+
 template<typename error_t>
 __inline__ __device__ __host__
 error_t error_measure(const int test, const int truth, const error_t weigth_1, const error_t weigth_0) {
-    return (truth == 1) ? weigth_1 * (test ^ truth) : weigth_0 * (test ^ truth);
+    return (truth == 1) ? -1 * weigth_1 * test : weigth_0 * test;
 }
 
 // __inline__ __device__ __host__
