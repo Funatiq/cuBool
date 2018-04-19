@@ -69,8 +69,9 @@ float get_float_update(const uint8_t factorDim, fast_kiss_state32_t state, const
 }
 
 // Metropolis–Hastings algorithm
+template<typename error_t>
 __inline__ __device__ __host__
-bool metro(fast_kiss_state32_t state, const int error, const float temperature, const int error_max) {
+bool metro(fast_kiss_state32_t state, const error_t error, const float temperature, const int error_max = 1) {
     if(error <= 0)
         return true;
     if(temperature <= 0)

@@ -33,8 +33,31 @@ int computeHammingDistanceCPU(const vector<bit_vector_t> &Ab,
     return error;
 }
 
+struct confusion_matrix {
+    int TP;
+    int TN;
+    int FP;
+    int FN;
+
+    confusion_matrix() : TP(0), TN(0), FP(0), FN(0) {};
+
+    confusion_matrix(int tp, int tn, int fp, int fn) : TP(tp), TN(tn), FP(fp), FN(fn) {};
+
+    float f1score() {
+        return 2.0f*TP / (2*TP + FP + FN);
+    }
+
+    float jaccard() {
+        return 1.0f*TP / (TP + FP + FN);
+    }
+
+    int total_error() {
+        return FP + FN;
+    }
+};
+
 template<typename bit_vector_t>
-void computeErrorsCPU(const vector<bit_vector_t> &Ab,
+confusion_matrix computeErrorsCPU(const vector<bit_vector_t> &Ab,
                         const vector<bit_vector_t> &Bb,
                         const vector<bit_vector_t> &Cb,
                         const int height,
@@ -55,17 +78,21 @@ void computeErrorsCPU(const vector<bit_vector_t> &Ab,
             const int vecLane = i % 32;
             const int C_ij = (Cb[vecId] >> vecLane) & 1;
 
-            if(product) {
-                if(C_ij)
-                    true_positives++;
-                else
-                    false_positives++;
-            } else {
-                if(C_ij)
-                    false_negatives++;
-                else
-                    true_negatives++;
-            }
+            // if(product) {
+            //     if(C_ij)
+            //         true_positives++;
+            //     else
+            //         false_positives++;
+            // } else {
+            //     if(C_ij)
+            //         false_negatives++;
+            //     else
+            //         true_negatives++;
+            // }
+            true_positives  +=  C_ij &  product;
+            true_negatives  += !(C_ij | product);
+            false_positives += !C_ij &  product;
+            false_negatives +=  C_ij & !product;
         }
     }
 
@@ -74,6 +101,36 @@ void computeErrorsCPU(const vector<bit_vector_t> &Ab,
     std::cout << "false_positives: " << false_positives << endl;
     std::cout << "false_negatives: " << false_negatives << endl;
     std::cout << "total error: " << false_positives + false_negatives << endl;
+
+    return confusion_matrix(true_positives, true_negatives, false_positives, false_negatives);
+}
+
+template<typename bit_vector_t>
+float computeTruePositiveCPU(const vector<bit_vector_t> &Ab,
+                       const vector<bit_vector_t> &Bb,
+                       const vector<bit_vector_t> &Cb,
+                       const int height,
+                       const int width)
+{
+    float true_positives = 0;
+
+    #pragma omp parallel for reduction(+:true_positives)
+    for(int j=0; j < width; ++j) {
+        uint32_t B_j = Bb[j];
+        for(int i=0; i < height; ++i) {
+            const int product = (Ab[i] & B_j) ? 1 : 0;
+
+            const int vecId = i / 32 * width + j;
+            const int vecLane = i % 32;
+            const int C_ij = (Cb[vecId] >> vecLane) & 1;
+
+            if(product & C_ij) {
+                true_positives++;
+            }
+        }
+    }
+
+    return true_positives;
 }
 
 template<typename bit_vector_t>
@@ -250,8 +307,8 @@ vector<error_t> computeInverseDensitiesCols(const vector<bit_vector_t> &Cb,
     return inverse_density_cols;
 }
 
-template<bool transpose, typename bit_vector_t, typename error_t>
-int updateLinesJaccardCPU(vector<bit_vector_t> &Ab,
+template<bool transpose, typename bit_vector_t>
+confusion_matrix updateLinesJaccardCPU(vector<bit_vector_t> &Ab,
                                    const int size_A,
                                    const vector<bit_vector_t> &Bb,
                                    const int size_B,
@@ -263,10 +320,11 @@ int updateLinesJaccardCPU(vector<bit_vector_t> &Ab,
                                    const float temperature,
                                    const float flipManyChance,
                                    const uint32_t flipManyDepth,
-                                   const vector<error_t>& weights_rows,
-                                   const vector<error_t>& weights_cols)
+                                   // const int all_true_positives)
+                                   const confusion_matrix confusion)
 {
-    error_t update = 0;
+    // int update = 0;
+    confusion_matrix confusion_update;
 
     #pragma omp for
     // #pragma omp parallel for reduction(+:update)
@@ -280,10 +338,16 @@ int updateLinesJaccardCPU(vector<bit_vector_t> &Ab,
         bit_vector_t A_i_new = Ab[i] ^ get_flip_mask(factorDim, state, flipManyChance, flipManyDepth);
         // bit_vector_t A_i_new = get_flip_mask(factorDim, state, flipManyChance, flipManyDepth);
 
+        // confusion_matrix confusion_line_old;
+        // confusion_matrix confusion_line_new;
         int true_positives_old = 0;
         int true_positives_new = 0;
-        int false_xs_old = 0;
-        int false_xs_new = 0;
+        // int false_xs_old = 0;
+        // int false_xs_new = 0;
+        int false_negatives_old = 0;
+        int false_negatives_new = 0;
+        int false_positives_old = 0;
+        int false_positives_new = 0;
         for(int j=0; j < size_B; ++j) {
             const int vecId = transpose ? j / 32 * size_A + i : i / 32 * size_B + j;
             const int vecLane = transpose ? j % 32 : i % 32;
@@ -294,20 +358,48 @@ int updateLinesJaccardCPU(vector<bit_vector_t> &Ab,
 
             true_positives_old += C_ij & product_old;
             true_positives_new += C_ij & product_new;
-            false_xs_old       += C_ij ^ product_old;
-            false_xs_new       += C_ij ^ product_new;
+
+            // false_xs_old       += C_ij ^ product_old;
+            // false_xs_new       += C_ij ^ product_new;
+
+            false_negatives_old += C_ij & !product_old;
+            false_negatives_new += C_ij & !product_new;
+
+            false_positives_old += !C_ij & product_old;
+            false_positives_new += !C_ij & product_new;
         }
-        const int jaccard_numerator = true_positives_old * false_xs_new - true_positives_new * false_xs_old;
+        const int all_true_positives_new = confusion.TP - true_positives_old + true_positives_new;
+        // const int all_false_positives_new = confusion.FP - false_positives_old + false_positives_new;
+        // const int all_false_negatives_new = confusion.FN - false_negatives_old + false_negatives_new;
+        // const confusion_matrix confusion_new(confusion.TP - true_positives_old + true_positives_new,
+        //                                      0,
+        //                                      confusion.FP - false_positives_old + false_positives_new,
+        //                                      confusion.FN - false_negatives_old + false_negatives_new);
+        // const int jaccard_numerator = confusion.TP * false_xs_new - all_true_positives_new * false_xs_old;
+        // const int jaccard_numerator = confusion.TP * (false_negatives_new + false_positives_new)
+        //                             - all_true_positives_new * (false_negatives_old + false_positives_old);
+        // const int jaccard_numerator = confusion.TP * false_negatives_new - all_true_positives_new * false_negatives_old;
+        // const int jaccard_numerator = confusion.TP * false_positives_new - all_true_positives_new * false_positives_old;
         // const int jaccard_numerator = true_positives_old * (true_positives_new + false_xs_new)
                                     // - true_positives_new * (true_positives_old + false_xs_old);
+        const float jaccard = 1.0f * confusion.TP / (confusion.TP + 3*false_negatives_old + false_positives_old)
+                            - 1.0f * all_true_positives_new / (all_true_positives_new + 3*false_negatives_new + false_positives_new);
+        // const float jaccard = 1.0f * confusion.TP / (confusion.TP + 3*confusion.FN + confusion.FP)
+        //                     - 1.0f * confusion_new.TP / (confusion_new.TP + 3*confusion_new.FN + confusion_new.FP);
 
-        if (metro(state, jaccard_numerator, temperature, size_B)) {
+        // const float f1score = 2.0f * confusion.TP / (2*confusion.TP + false_negatives_old + false_positives_old)
+        //                     - 2.0f * all_true_positives_new / (2*all_true_positives_new + false_negatives_new + false_positives_new);
+
+        if (metro(state, jaccard, temperature)) {
             Ab[i] = A_i_new;
-            update += jaccard_numerator;
+            // update += true_positives_new - true_positives_old;
+            confusion_update.TP += true_positives_new  - true_positives_old;
+            confusion_update.FP += false_positives_new - false_positives_old;
+            confusion_update.FN += false_negatives_new - false_negatives_old;
         }
     }
 
-    return update;
+    return confusion_update;
 }
 
 template<bool transpose, typename bit_vector_t, typename error_t>
@@ -645,13 +737,18 @@ public:
         }
 
         fast_kiss_state32_t state = get_initial_fast_kiss_state32(config.seed);
+        // float temperature = 0;
         float temperature = config.tempStart;
         size_t iteration = 0;
         size_t stuckIterations = 0;
         auto distancePrev = distance_;
-        my_error_t distance_update_sum = 0;
+        // my_error_t tempStep_distance = 1;
+        // my_error_t update_sum = 0;
         int lineToBeChanged;
         uint32_t cpuSeed;
+        // int all_true_positives = computeTruePositiveCPU(A_, B_, C_, height_, width_);
+        // int all_true_positives = computeTruePositiveCPU(A_, B_, C_, height_, width_);
+        auto confusion = computeErrorsCPU(A_, B_, C_, height_, width_);
         #pragma omp parallel firstprivate(iteration)
         while( distance_ > config.distanceThreshold
                 && iteration++ < config.maxIterations
@@ -663,61 +760,94 @@ public:
             {
                 lineToBeChanged = (fast_kiss32(state) % height_) / WARPSPERBLOCK * WARPSPERBLOCK;
                 cpuSeed = fast_kiss32(state) + iteration;
+
+                // confusion.TP = computeTruePositiveCPU(A_, B_, C_, height_, width_);
             }
 
-            // my_error_t distance_update = vectorMatrixMultCompareLineCPU<false>(A_, height_, B_, width_, C_, factorDim_,
+            // my_error_t update = vectorMatrixMultCompareLineCPU<false>(A_, height_, B_, width_, C_, factorDim_,
             //                               lineToBeChanged, min(linesAtOnce, height_), cpuSeed, temperature/10,
             //                               config.flipManyChance, config.flipManyDepth,
             //                               weights_rows_, weights_cols_);
-            my_error_t distance_update = updateLinesJaccardCPU<false>(A_, height_, B_, width_, C_, factorDim_,
+            auto confusion_update = updateLinesJaccardCPU<false>(A_, height_, B_, width_, C_, factorDim_,
                                           lineToBeChanged, min(linesAtOnce, height_), cpuSeed, temperature/10,
                                           config.flipManyChance, config.flipManyDepth,
-                                          weights_rows_, weights_cols_);
+                                          confusion);
             // implicit barrier
+
+            #pragma omp atomic
+            confusion.TP += confusion_update.TP;
+            #pragma omp atomic
+            confusion.FP += confusion_update.FP;
+            #pragma omp atomic
+            confusion.FN += confusion_update.FN;
+            #pragma omp barrier
 
             // Change cols
             #pragma omp single
             {
                 lineToBeChanged = (fast_kiss32(state) % width_) / WARPSPERBLOCK * WARPSPERBLOCK;
                 cpuSeed = fast_kiss32(state) + iteration;
+
+                // confusion.TP = computeTruePositiveCPU(A_, B_, C_, height_, width_);
             }
 
-            // distance_update += vectorMatrixMultCompareLineCPU<true>(B_, width_, A_, height_, C_, factorDim_,
+            // update += vectorMatrixMultCompareLineCPU<true>(B_, width_, A_, height_, C_, factorDim_,
             //                               lineToBeChanged, min(linesAtOnce, height_), cpuSeed, temperature/10,
             //                               config.flipManyChance, config.flipManyDepth,
             //                               weights_cols_, weights_rows_);
-            distance_update += updateLinesJaccardCPU<true>(B_, width_, A_, height_, C_, factorDim_,
+            confusion_update = updateLinesJaccardCPU<true>(B_, width_, A_, height_, C_, factorDim_,
                                           lineToBeChanged, min(linesAtOnce, height_), cpuSeed, temperature/10,
                                           config.flipManyChance, config.flipManyDepth,
-                                          weights_cols_, weights_rows_);
+                                          confusion);
             // implicit barrier
 
             #pragma omp atomic
-            distance_update_sum += distance_update;
+            confusion.TP += confusion_update.TP;
+            #pragma omp atomic
+            confusion.FP += confusion_update.FP;
+            #pragma omp atomic
+            confusion.FN += confusion_update.FN;
             #pragma omp barrier
 
             #pragma omp single
             {
                 // int hamming;
-                if(iteration % config.distanceShowEvery == 0) {
+                // if(iteration % config.distanceShowEvery == 0) {
                     // distance_ = computeDistanceCPU(A_, B_, C_, height_, width_, weights_rows_, weights_cols_);
-                    distance_ = computeHammingDistanceCPU(A_, B_, C_, height_, width_);
-                }
-
+                    // distance_ = computeHammingDistanceCPU(A_, B_, C_, height_, width_);
+                // }
+                distance_ = confusion.total_error();
 
                 if(config.verbosity > 0 && iteration % config.distanceShowEvery == 0) {
                     std::cout << "Iteration: " << iteration
-                              << "\tupdate: " << distance_update_sum / config.distanceShowEvery
+                              // << "\tupdate: " << update_sum / config.distanceShowEvery
+                              << "\tTP: " << confusion.TP
+                              // << "\terrors: " << confusion.total_error()
                               // << "\trel_err: " << (float) distance_ / (height_*width_)
                               << "\thamming: " << distance_
                               << "\ttemp: " << temperature;
                     std::cout << std::endl;
 
                     // std::cout << "\tseed: " << (int) cpuSeed << std::endl;
-                    distance_update_sum = 0;
+                    // update_sum = 0;
+
+                    // if((float) distance_ / tempStep_distance < 0.998f) {
+                    //     temperature /= config.tempFactor;
+                    //     temperature /= config.tempFactor;
+                    //     temperature /= config.tempFactor;
+                    //     temperature /= config.tempFactor;
+                    // }
+                    // tempStep_distance = distance_;
                 }
                 if(iteration % config.tempStep == 0) {
+                    //delay temperature
+                    // if(temperature <= 0) temperature = config.tempStart;
                     temperature *= config.tempFactor;
+                    // if((float) distance_ / tempStep_distance < 0.9f)
+                    //     temperature /= config.tempFactor;
+                    // else
+                    //     temperature *= config.tempFactor;
+                    // tempStep_distance = distance_;
                 }
                 if(distance_ == distancePrev)
                     stuckIterations++;

@@ -5,6 +5,7 @@
 #include <sstream>
 #include <fstream>
 #include <bitset>
+#include <ctime>
 
 #include "config.h"
 #include "rngpu.hpp"
@@ -369,18 +370,17 @@ void writeToFiles(const string filename,
                   const int width,
                   const uint8_t factorDim)
 {
-    time_t rawtime;
-    struct tm * timeinfo;
-    char buffer[80];
+    time_t now = time(0);
+    // char* dt = ctime(&now);
+    tm *ltm = localtime(&now);
 
-    time (&rawtime);
-    timeinfo = localtime(&rawtime);
-
-    strftime(buffer, sizeof(buffer), "%X", timeinfo);
-    string str = buffer;
+    stringstream date;
+    date << 1+ltm->tm_mon << '-' << ltm->tm_mday << '_' << ltm->tm_hour << ':' << ltm->tm_min << ':' << ltm->tm_sec;
     
-    string filename_A = filename + '_' + string("factor_A_") + buffer + string(".data");
-    string filename_B = filename + '_' + string("factor_B_") + buffer + string(".data");
+    stringstream filename_A;
+    filename_A << filename << "_factor_A_" << date.str() << ".data";
+    stringstream filename_B;
+    filename_B << filename << "_factor_B_" << date.rdbuf() << ".data";
 
     int nonzeroelements = 0;
     for (int i = 0; i < height; i++){
@@ -388,7 +388,7 @@ void writeToFiles(const string filename,
         nonzeroelements += row.count();
     }
     
-    ofstream os_A(filename_A);
+    ofstream os_A(filename_A.str());
     if (os_A.good()){
         os_A << height << " " << (int)factorDim << " " << nonzeroelements << "\n";
         for (int i = 0; i < height; i++){
@@ -400,7 +400,7 @@ void writeToFiles(const string filename,
         }
         os_A.close();
     } else {
-        cerr << "File " << filename_A << " could not be openend!" << endl;
+        cerr << "File " << filename_A.str() << " could not be openend!" << endl;
     }
     
     nonzeroelements = 0;
@@ -409,7 +409,7 @@ void writeToFiles(const string filename,
         nonzeroelements += col.count();
     }
 
-    ofstream os_B(filename_B);
+    ofstream os_B(filename_B.str());
     if(os_B.good()){
         os_B  << width << " " << (int)factorDim << " " << nonzeroelements << "\n";
         for (int j = 0; j < width; j++){
@@ -421,10 +421,10 @@ void writeToFiles(const string filename,
         }
         os_B.close();
     } else {
-        cerr << "File " << filename_B << " could not be openend!" << endl;
+        cerr << "File " << filename_B.str() << " could not be openend!" << endl;
     }
     
-    cout << "Writing to files \"" << filename_A << "\" and \"" << filename_B << "\" complete" << endl;
+    cout << "Writing to files \"" << filename_A.rdbuf() << "\" and \"" << filename_B.rdbuf() << "\" complete" << endl;
 }
 
 #endif
