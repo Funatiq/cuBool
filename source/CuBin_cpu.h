@@ -3,9 +3,17 @@
 
 #include <vector>
 #include <iostream>
+#include <limits>
 #include <cmath>
 
+#include "helper/config.h"
+#include "helper/rngpu.hpp"
+#include "helper/updates_and_measures.cuh"
+
 using std::vector;
+using std::cout;
+using std::cerr;
+using std::endl;
 
 template<typename bit_vector_t>
 int computeHammingDistanceCPU(const vector<bit_vector_t> &Ab,
@@ -91,16 +99,16 @@ confusion_matrix computeErrorsCPU(const vector<bit_vector_t> &Ab,
             // }
             true_positives  +=  C_ij &  product;
             true_negatives  += !(C_ij | product);
-            false_positives += !C_ij &  product;
+            false_positives += (!C_ij) &  product;
             false_negatives +=  C_ij & !product;
         }
     }
 
-    std::cout << "true_positives: " << true_positives << endl;
-    std::cout << "true_negatives: " << true_negatives << endl;
-    std::cout << "false_positives: " << false_positives << endl;
-    std::cout << "false_negatives: " << false_negatives << endl;
-    std::cout << "total error: " << false_positives + false_negatives << endl;
+    cout << "true_positives: " << true_positives << endl;
+    cout << "true_negatives: " << true_negatives << endl;
+    cout << "false_positives: " << false_positives << endl;
+    cout << "false_negatives: " << false_negatives << endl;
+    cout << "total error: " << false_positives + false_negatives << endl;
 
     return confusion_matrix(true_positives, true_negatives, false_positives, false_negatives);
 }
@@ -335,40 +343,48 @@ confusion_matrix updateLinesJaccardCPU(vector<bit_vector_t> &Ab,
         state = get_initial_fast_kiss_state32(seed + id);
 
         const bit_vector_t A_i = Ab[i];
-        bit_vector_t A_i_new = Ab[i] ^ get_flip_mask(factorDim, state, flipManyChance, flipManyDepth);
-        // bit_vector_t A_i_new = get_flip_mask(factorDim, state, flipManyChance, flipManyDepth);
+        const bit_vector_t A_i_draw = get_flip_mask_many(factorDim, state, flipManyDepth);
+        const bit_vector_t A_i_flip = A_i ^ A_i_draw;
+        // const bit_vector_t A_i_new = Ab[i] ^ get_flip_mask(factorDim, state, flipManyChance, flipManyDepth);
+        // const bit_vector_t A_i_new = get_flip_mask(factorDim, state, flipManyChance, flipManyDepth);
 
-        // confusion_matrix confusion_line_old;
-        // confusion_matrix confusion_line_new;
-        int true_positives_old = 0;
-        int true_positives_new = 0;
-        // int false_xs_old = 0;
-        // int false_xs_new = 0;
-        int false_negatives_old = 0;
-        int false_negatives_new = 0;
-        int false_positives_old = 0;
-        int false_positives_new = 0;
+        confusion_matrix confusion_old;
+        confusion_matrix confusion_draw;
+        confusion_matrix confusion_flip;
+        // int true_positives_old = 0;
+        // int true_positives_new = 0;
+        // // int false_xs_old = 0;
+        // // int false_xs_new = 0;
+        // int false_negatives_old = 0;
+        // int false_negatives_new = 0;
+        // int false_positives_old = 0;
+        // int false_positives_new = 0;
         for(int j=0; j < size_B; ++j) {
             const int vecId = transpose ? j / 32 * size_A + i : i / 32 * size_B + j;
             const int vecLane = transpose ? j % 32 : i % 32;
             const int C_ij = (Cb[vecId] >> vecLane) & 1;
 
-            const int product_old = (A_i     & Bb[j]) ? 1 : 0;
-            const int product_new = (A_i_new & Bb[j]) ? 1 : 0;
+            const int product_old  = (A_i      & Bb[j]) ? 1 : 0;
+            const int product_draw = (A_i_draw & Bb[j]) ? 1 : 0;
+            const int product_flip = (A_i_flip & Bb[j]) ? 1 : 0;
 
-            true_positives_old += C_ij & product_old;
-            true_positives_new += C_ij & product_new;
+            confusion_old.TP  += C_ij & product_old;
+            confusion_draw.TP += C_ij & product_draw;
+            confusion_flip.TP += C_ij & product_flip;
 
             // false_xs_old       += C_ij ^ product_old;
             // false_xs_new       += C_ij ^ product_new;
 
-            false_negatives_old += C_ij & !product_old;
-            false_negatives_new += C_ij & !product_new;
+            confusion_old.FN  += C_ij & !product_old;
+            confusion_draw.FN += C_ij & !product_draw;
+            confusion_flip.FN += C_ij & !product_flip;
 
-            false_positives_old += !C_ij & product_old;
-            false_positives_new += !C_ij & product_new;
+            confusion_old.FP  += (!C_ij) & product_old;
+            confusion_draw.FP += (!C_ij) & product_draw;
+            confusion_flip.FP += (!C_ij) & product_flip;
         }
-        const int all_true_positives_new = confusion.TP - true_positives_old + true_positives_new;
+        const int all_tp_draw = confusion.TP - confusion_old.TP + confusion_draw.TP;
+        const int all_tp_flip = confusion.TP - confusion_old.TP + confusion_flip.TP;
         // const int all_false_positives_new = confusion.FP - false_positives_old + false_positives_new;
         // const int all_false_negatives_new = confusion.FN - false_negatives_old + false_negatives_new;
         // const confusion_matrix confusion_new(confusion.TP - true_positives_old + true_positives_new,
@@ -382,20 +398,48 @@ confusion_matrix updateLinesJaccardCPU(vector<bit_vector_t> &Ab,
         // const int jaccard_numerator = confusion.TP * false_positives_new - all_true_positives_new * false_positives_old;
         // const int jaccard_numerator = true_positives_old * (true_positives_new + false_xs_new)
                                     // - true_positives_new * (true_positives_old + false_xs_old);
-        const float jaccard = 1.0f * confusion.TP / (confusion.TP + 3*false_negatives_old + false_positives_old)
-                            - 1.0f * all_true_positives_new / (all_true_positives_new + 3*false_negatives_new + false_positives_new);
+        // const float jaccard = 1.0f * confusion.TP / (confusion.TP + 3*false_negatives_old + false_positives_old)
+        //                     - 1.0f * all_true_positives_new / (all_true_positives_new + 3*false_negatives_new + false_positives_new);
         // const float jaccard = 1.0f * confusion.TP / (confusion.TP + 3*confusion.FN + confusion.FP)
         //                     - 1.0f * confusion_new.TP / (confusion_new.TP + 3*confusion_new.FN + confusion_new.FP);
 
         // const float f1score = 2.0f * confusion.TP / (2*confusion.TP + false_negatives_old + false_positives_old)
         //                     - 2.0f * all_true_positives_new / (2*all_true_positives_new + false_negatives_new + false_positives_new);
 
-        if (metro(state, jaccard, temperature)) {
+        const float jaccard_old  = 1.0f * confusion.TP / (confusion.TP + 3*confusion_old.FN + confusion_old.FP);
+        const float jaccard_draw = 1.0f * all_tp_draw / (all_tp_draw + 3*confusion_draw.FN + confusion_draw.FP);
+        const float jaccard_flip = 1.0f * all_tp_flip / (all_tp_flip + 3*confusion_flip.FN + confusion_flip.FP);
+
+        bit_vector_t A_i_new = A_i_draw;
+        float jaccard_new = jaccard_draw;
+        confusion_matrix& confusion_new = confusion_draw;
+        if(jaccard_draw > jaccard_old) {
+            if(jaccard_flip > jaccard_draw) {
+                A_i_new = A_i_flip;
+                jaccard_new = jaccard_flip;
+                confusion_new = confusion_flip;
+            }
+        } else {
+            if(jaccard_flip > jaccard_old) {
+                A_i_new = A_i_flip;
+                jaccard_new = jaccard_flip;
+                confusion_new = confusion_flip;
+            } else {
+                const uint32_t coin = fast_kiss32(state) % 2;
+                if(coin) {
+                    A_i_new = A_i_flip;
+                    jaccard_new = jaccard_flip;
+                    confusion_new = confusion_flip;
+                }
+            }
+        }
+
+        if (metro(state, jaccard_old - jaccard_new, temperature)) {
             Ab[i] = A_i_new;
             // update += true_positives_new - true_positives_old;
-            confusion_update.TP += true_positives_new  - true_positives_old;
-            confusion_update.FP += false_positives_new - false_positives_old;
-            confusion_update.FN += false_negatives_new - false_negatives_old;
+            confusion_update.TP += confusion_new.TP - confusion_old.TP;
+            confusion_update.FP += confusion_new.FP - confusion_old.FP;
+            confusion_update.FN += confusion_new.FN - confusion_old.FN;
         }
     }
 
@@ -553,15 +597,15 @@ class Cubin_CPU
 
 public:
     Cubin_CPU(const factor_matrix_t& A,
-          const factor_matrix_t& B,
-          const bit_matrix_t& C,
-          const uint8_t factorDim = 20,
-          const float density = 0.99f)
+              const factor_matrix_t& B,
+              const bit_matrix_t& C,
+              const uint8_t factorDim = 20,
+              const float density = 0.99f)
     {
         cout << "~~~ CPU CuBin ~~~" << endl; 
 
         if(factorDim > 32) {
-            std::cerr << "Factor dimension too big! Maximum is 32." << endl;
+            cerr << "Factor dimension too big! Maximum is 32." << endl;
             factorDim_ = 32;
         }
         else factorDim_ = factorDim;
@@ -586,12 +630,12 @@ public:
         }
 
         if( SDIV(A.size()/lineSize_,32) * B.size()/lineSize_ != C.size()) {
-            std::cerr << "CuBin construction: Matrix dimension mismatch." << std::endl;
+            cerr << "CuBin construction: Matrix dimension mismatch." << endl;
             return false;
         }
 
         if(initialized_) {
-            std::cerr << "CuBin already initialized. Please clear CuBin before reinitialization." << std::endl;
+            cerr << "CuBin already initialized. Please clear CuBin before reinitialization." << endl;
             return false;
         }
 
@@ -610,7 +654,7 @@ public:
         // weights_cols_ = computeDensitiesCols(C_, height_, width_);
 
         my_error_t max = 0;
-        my_error_t min = numeric_limits<float>::max();
+        my_error_t min = std::numeric_limits<float>::max();
         for (const auto& w : weights_rows_) {
             // cout << w << " ";
             if(w > max) max = w;
@@ -620,7 +664,7 @@ public:
         cout << "rows weight min: " << min << " weight max: " << max << endl;
 
         max = 0;
-        min = numeric_limits<float>::max();
+        min = std::numeric_limits<float>::max();
         for (const auto& w : weights_cols_) {
             // cout << w << " ";
             if(w > max) max = w;
@@ -632,22 +676,22 @@ public:
         distance_ = computeHammingDistanceCPU(A_, B_, C_, height_, width_);
         // distance_ = computeDistanceCPU(A_, B_, C_, height_, width_, weights_rows_, weights_cols_);
 
-        std::cout << "CuBin initialization complete." << endl;
+        cout << "CuBin initialization complete." << endl;
 
-        std::cout << "Matrix dimensions:\t" << height_ << "x" << width_ << endl;
-        std::cout << "Factor dimension:\t" << (int) factorDim_ << endl;
+        cout << "Matrix dimensions:\t" << height_ << "x" << width_ << endl;
+        cout << "Factor dimension:\t" << (int) factorDim_ << endl;
 
-        std::cout << "Start distance: "
+        cout << "Start distance: "
                   << "\tabs_err: " << distance_
                   << "\trel_err: " << (float) distance_ / (height_ * width_)
-                  << std::endl;
+                  << endl;
 
         return initialized_ = true;
     }
 
     bool verifyDistance() {
         if(!initialized_) {
-            std::cerr << "CuBin not initialized." << endl;
+            cerr << "CuBin not initialized." << endl;
             return false;
         }
 
@@ -658,9 +702,9 @@ public:
 
         bool equal = fabs(distance_- distance_proof) < 1e-3; // std::numeric_limits<float>::epsilon();
         if(!equal) {
-            std::cout << "----- !Distances differ! -----\n";
-            std::cout << "Running distance:  " << distance_ << "\n";
-            std::cout << "Real distance:     " << distance_proof << std::endl;
+            cout << "----- !Distances differ! -----\n";
+            cout << "Running distance:  " << distance_ << "\n";
+            cout << "Real distance:     " << distance_proof << endl;
         }
         return equal;
     } 
@@ -677,7 +721,7 @@ public:
 
     void getFactors(factor_matrix_t& A, factor_matrix_t& B) {
         if(!initialized_) {
-            std::cerr << "CuBin not initialized." << endl;
+            cerr << "CuBin not initialized." << endl;
             return;
         }
 
@@ -687,7 +731,7 @@ public:
 
     my_error_t getDistance() {
         if(!initialized_) {
-            std::cerr << "CuBin not initialized." << endl;
+            cerr << "CuBin not initialized." << endl;
             return -1;
         }
         return distance_;
@@ -712,28 +756,28 @@ public:
 
     void run(const CuBin_config& config) {
         if(!initialized_) {
-            std::cerr << "CuBin not initialized." << endl;
+            cerr << "CuBin not initialized." << endl;
             return;
         }
 
         size_t linesAtOnce = config.linesAtOnce;
 
         if(config.verbosity > 0) {
-            std::cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n";
-            std::cout << "- - - - Starting " << config.maxIterations
+            cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n";
+            cout << "- - - - Starting " << config.maxIterations
                       << " CPU iterations, changing " << linesAtOnce
                       << " lines each time\n";
-            std::cout << "- - - - Showing error every " << config.distanceShowEvery
+            cout << "- - - - Showing error every " << config.distanceShowEvery
                       << " steps\n";
             if(config.tempStart > 0) {
-                std::cout << "- - - - Start temperature " << config.tempStart
+                cout << "- - - - Start temperature " << config.tempStart
                           << " multiplied by " << config.tempFactor
                           << " every " << config.tempStep
                           << " steps\n";
 
             }
-            std::cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -";
-            std::cout << std::endl;
+            cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -";
+            cout << endl;
         }
 
         fast_kiss_state32_t state = get_initial_fast_kiss_state32(config.seed);
@@ -819,16 +863,16 @@ public:
                 distance_ = confusion.total_error();
 
                 if(config.verbosity > 0 && iteration % config.distanceShowEvery == 0) {
-                    std::cout << "Iteration: " << iteration
+                    cout << "Iteration: " << iteration
                               // << "\tupdate: " << update_sum / config.distanceShowEvery
                               << "\tTP: " << confusion.TP
                               // << "\terrors: " << confusion.total_error()
                               // << "\trel_err: " << (float) distance_ / (height_*width_)
                               << "\thamming: " << distance_
                               << "\ttemp: " << temperature;
-                    std::cout << std::endl;
+                    cout << endl;
 
-                    // std::cout << "\tseed: " << (int) cpuSeed << std::endl;
+                    // cout << "\tseed: " << (int) cpuSeed << endl;
                     // update_sum = 0;
 
                     // if((float) distance_ / tempStep_distance < 0.998f) {
@@ -859,19 +903,19 @@ public:
 
         if(config.verbosity > 0) {
             if (!(iteration < config.maxIterations))
-                std::cout << "Reached iteration limit: " << config.maxIterations << std::endl;
+                cout << "Reached iteration limit: " << config.maxIterations << endl;
             if (!(distance_ > config.distanceThreshold))
-                std::cout << "Distance below threshold." << std::endl;
+                cout << "Distance below threshold." << endl;
             if (!(temperature > config.tempEnd))
-                std::cout << "Temperature below threshold." << std::endl;
+                cout << "Temperature below threshold." << endl;
             if (!(stuckIterations < config.stuckIterationsBeforeBreak))
-                std::cout << "Stuck for " << stuckIterations << " iterations." << std::endl;
+                cout << "Stuck for " << stuckIterations << " iterations." << endl;
         }
-        std::cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n";
-        std::cout << "Final result: "
+        cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n";
+        cout << "Final result: "
                   << "\tabs_err: " << distance_
                   << "\trel_err: " << (float) distance_ / (height_ * width_)
-                  << std::endl;
+                  << endl;
     }  
 
 private:

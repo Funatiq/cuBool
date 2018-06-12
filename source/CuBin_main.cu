@@ -1,5 +1,6 @@
 #include <vector>
 #include <iostream>
+#include <string>
 // #include <limits>
 
 #include "helper/config.h"
@@ -11,17 +12,21 @@
 #include "CuBin_gpu.cuh"
 #include "CuBin_cpu.h"
 
-using namespace std;
+using std::cout;
+using std::cerr;
+using std::endl;
+using std::string;
+using std::vector;
 
 using my_bit_vector_t = uint32_t; // only tested uint32_t
 
-// using my_cubin = CuBin<my_bit_vector_t>;
-using my_cubin = Cubin_CPU<my_bit_vector_t>;
+using my_cubin = CuBin<my_bit_vector_t>;
+// using my_cubin = Cubin_CPU<my_bit_vector_t>;
 
 int main(int argc, char **argv) {
     mc::args_parser args{argc, argv};
 
-    auto filename = std::string{};
+    auto filename = string{};
     if(args.non_prefixed_count() > 0) {
         filename = args.non_prefixed(0);
     } else {
@@ -47,7 +52,7 @@ int main(int argc, char **argv) {
 
     config.stuckIterationsBeforeBreak = args.get<size_t>({"stuck"}, config.stuckIterationsBeforeBreak);
 
-     cout << "verbosity " << config.verbosity << "\n"
+    cout << "verbosity " << config.verbosity << "\n"
         << "factorDim " << (int)factorDim << "\n"
         << "maxIterations " << config.maxIterations << "\n"
         << "linesAtOnce " << config.linesAtOnce << "\n"

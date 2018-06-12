@@ -1,11 +1,16 @@
 #ifndef IO_AND_ALLOCATION
 #define IO_AND_ALLOCATION
 
+#include <iostream>
 #include <string>
 #include <sstream>
 #include <fstream>
+#include <vector>
 #include <bitset>
 #include <ctime>
+#include <algorithm>
+#include <numeric>
+#include <random>
 
 #include "config.h"
 #include "rngpu.hpp"
@@ -16,7 +21,11 @@
 // #define SDIV(x,y)(((x)-1)/(y)+1)
 #endif
 
-using namespace std;
+using std::cout;
+using std::cerr;
+using std::endl;
+using std::string;
+using std::vector;
 
 void generate_random_matrix(const int height, const int width, const uint8_t factorDim, const int num_kiss, 
                             vector<uint32_t> &Ab, vector<uint32_t> &Bb, vector<uint32_t> &C0b,
@@ -161,7 +170,7 @@ void readInputFileData(const string filename,
                        int &height, int &width, 
                        float &density)
 {
-    ifstream is {filename};
+    std::ifstream is {filename};
 
     if(!is.good()) throw std::runtime_error{"File " + filename +
                                             " could not be opened!"};
@@ -175,10 +184,15 @@ void readInputFileData(const string filename,
     C0b.clear();
     C0b.resize(sizeCb,0);
 
+    vector<uint32_t> row_permutation(height);
+    std::iota(row_permutation.begin(), row_permutation.end(), 0);
+    std::shuffle(row_permutation.begin(), row_permutation.end(), std::mt19937{std::random_device{}()});
+
     int nonzeroelements = 0;
     for(; ones > 0; --ones) {
         std::uint64_t r, c;
         is >> r >> c;
+        // r = row_permutation[r];
         int vecId = r / 32 * width + c;
         int vecLane = r % 32;
         C0b[vecId] |= 1 << vecLane;
@@ -370,6 +384,10 @@ void writeToFiles(const string filename,
                   const int width,
                   const uint8_t factorDim)
 {
+    using std::stringstream;
+    using std::bitset;
+    using std::ofstream;
+
     time_t now = time(0);
     // char* dt = ctime(&now);
     tm *ltm = localtime(&now);
