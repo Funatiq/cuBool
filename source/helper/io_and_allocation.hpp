@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <numeric>
 #include <random>
+#include <cmath> // log2
 
 #include "config.h"
 #include "rngpu.hpp"
@@ -225,16 +226,53 @@ void initializeFactors( vector<uint32_t> &Ab, vector<uint32_t> &Bb,
     Bb.clear();
     Bb.resize(width, 0);
 
-    // for (int i = 0; i < height; i++) {
-    //     Ab[i] = fast_kiss32(state) >> (32-factorDim);
-    // }
+    double threshold;
 
-    // for (int j = 0; j < width; j++) {
-    //     Bb[j] = fast_kiss32(state) >> (32-factorDim);
-    // }
+    switch(INITIALIZATIONMODE) {
+        case 1:
+            threshold = (sqrt(1 - pow(1 - density, 1 / (double) factorDim)));
+            break;
+        case 2:
+            threshold = (density / (double) 100);
+            break;
+        case 3:
+            threshold = (density);
+            break;
+    }
+    const int rand_depth = -log2(threshold)+1;
+    // const int rand_depth = 5;
+
+    cout << "Init threshold: " << threshold << endl;
+    cout << "Init rand depth: " << rand_depth << " -> " << pow(2, -rand_depth) << endl;
+
+    if(rand_depth < 15) {
+        const uint32_t factorMask = UINT32_MAX >> (32-factorDim);
+
+        int counter = 0;
+        for (int i = 0; i < height; i++) {
+            Ab[i] = factorMask;
+            for(int d = 0; d < rand_depth; ++d) {
+                Ab[i] &= fast_kiss32(state);
+            }
+            if(Ab[i]) ++counter;
+        }
+        cout << "# Ai != 0: " << counter << endl;
+
+        counter = 0;
+        for (int j = 0; j < width; j++) {
+            Bb[j] = factorMask;
+            for(int d = 0; d < rand_depth; ++d) {
+                Bb[j] &= fast_kiss32(state);
+            }
+            if(Bb[j]) ++counter;
+        }
+        cout << "# Bj != 0: " << counter << endl;
+    }
     
-    printf("Initialization of A and B complete\n");
-    printf("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
+    cout << "Initialization of A and B complete\n";
+    for(int i=0; i<38; ++i)
+        cout << "- ";
+    cout << endl;
 }
 
 // Initialization of A and B
@@ -249,43 +287,44 @@ void initializeFactors2( vector<uint32_t> &Ab, vector<uint32_t> &Bb,
     Bb.clear();
     Bb.resize(width, 0);
 
+    uint32_t threshold = UINT32_MAX;
+
+    switch(INITIALIZATIONMODE) {
+        case 1:
+            threshold *= (sqrt(1 - pow(1 - density, 1 / (double) factorDim)));
+            break;
+        case 2:
+            threshold *= (density / (double) 100);
+            break;
+        case 3:
+            threshold *= density;
+            break;
+    }
+    cout << "Init threshold: " << float(threshold)/UINT32_MAX << endl;
+
     // Initialize A and B
-    bool threshold;
+    int counter = 0;
     for (int i = 0; i < height; i++) {
         #pragma unroll
         for (int j = 0; j < factorDim; j++) {
-            switch(INITIALIZATIONMODE) {
-                case 1: threshold = (fast_kiss32(state) / (double) UINT32_MAX) 
-                                        < (sqrt(1 - pow(1 - density, 1 / (double) factorDim)));
-                                        break;
-                case 2: threshold = (fast_kiss32(state) / (double) UINT32_MAX) 
-                                        < (density / (double) 100);
-                                        break;
-                case 3: threshold = (fast_kiss32(state) / (double) UINT32_MAX) 
-                                        < density;
-                                        break;
-            }
-            if (threshold) Ab[i] |= 1 << j;
+            if (fast_kiss32(state) < threshold)
+                Ab[i] |= 1 << j;
         }
+        if(Ab[i]) ++counter;
     }
+    cout << "# Ai != 0: " << counter << endl;
 
+    counter = 0;
     for (int i = 0; i < width; i++) {
         #pragma unroll
         for (int j = 0; j < factorDim; j++) {
-            switch(INITIALIZATIONMODE) {
-                case 1: threshold = (fast_kiss32(state) / (double) UINT32_MAX) 
-                                        < (sqrt(1 - pow(1 - density, 1 / (double) factorDim)));
-                                        break;
-                case 2: threshold = (fast_kiss32(state) / (double) UINT32_MAX) 
-                                        < (density / (double) 100);
-                                        break;
-                case 3: threshold = (fast_kiss32(state) / (double) UINT32_MAX) 
-                                        < density;
-                                        break;
-            }
-            if (threshold) Bb[i] |= 1 << j;
+            if (fast_kiss32(state) < threshold)
+                Bb[i] |= 1 << j;
         }
+        if(Bb[i]) ++counter;
     }
+    cout << "# Bj != 0: " << counter << endl;
+
     
     printf("Initialization of A and B complete\n");
     printf("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
@@ -334,41 +373,32 @@ void initializeFactors2( vector<float> &A, vector<float> &B,
     B.clear();
     B.resize(width * factorDim, 0);
 
+    uint32_t threshold = UINT32_MAX;
+
+    switch(INITIALIZATIONMODE) {
+        case 1:
+            threshold *= (sqrt(1 - pow(1 - density, 1 / (double) factorDim)));
+            break;
+        case 2:
+            threshold *= (density / (double) 100);
+            break;
+        case 3:
+            threshold *= density;
+            break;
+    }
+
     // Initialize A and B
-    bool threshold;
     for (int i = 0; i < height; i++) {
         #pragma unroll
         for (int j = 0; j < factorDim; j++) {
-            switch(INITIALIZATIONMODE) {
-                case 1: threshold = (fast_kiss32(state) / (double) UINT32_MAX) 
-                                        < (sqrt(1 - pow(1 - density, 1 / (double) factorDim)));
-                                        break;
-                case 2: threshold = (fast_kiss32(state) / (double) UINT32_MAX) 
-                                        < (density / (double) 100);
-                                        break;
-                case 3: threshold = (fast_kiss32(state) / (double) UINT32_MAX) 
-                                        < density;
-                                        break;
-            }
-            A[i * factorDim + j] = threshold;
+            A[i * factorDim + j] = fast_kiss32(state) < threshold;
         }
     }
 
     for (int i = 0; i < width; i++) {
         #pragma unroll
         for (int j = 0; j < factorDim; j++) {
-            switch(INITIALIZATIONMODE) {
-                case 1: threshold = (fast_kiss32(state) / (double) UINT32_MAX) 
-                                        < (sqrt(1 - pow(1 - density, 1 / (double) factorDim)));
-                                        break;
-                case 2: threshold = (fast_kiss32(state) / (double) UINT32_MAX) 
-                                        < (density / (double) 100);
-                                        break;
-                case 3: threshold = (fast_kiss32(state) / (double) UINT32_MAX) 
-                                        < density;
-                                        break;
-            }
-            B[i * factorDim + j] = threshold;
+            B[i * factorDim + j] = fast_kiss32(state) < threshold;
         }
     }
     

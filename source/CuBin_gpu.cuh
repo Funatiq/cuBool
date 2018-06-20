@@ -11,6 +11,52 @@
 #include "helper/updates_and_measures.cuh"
 #include "helper/cuda_helpers.cuh"
 
+using std::cout;
+using std::endl;
+
+// init kernels ---------------------------------------------------------------
+template<typename bit_vector_t>
+__global__
+void initFactor(bit_vector_t * Ab,
+                const int height,
+                const uint8_t factorDim,
+                const uint32_t seed, 
+                const float threshold)
+{
+    const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+
+    if(tid < height) {
+        fast_kiss_state32_t state = get_initial_fast_kiss_state32(seed + tid);
+        const int randDepth = -log2f(threshold)+1;
+
+        bit_vector_t Ai = ~bit_vector_t(0) >> (32-factorDim);
+        for(int d=0; d<randDepth; ++d)
+            Ai &= fast_kiss32(state);
+
+        Ab[tid] = Ai;
+    }
+}
+
+__global__
+void initFactor(float * A,
+                const int height,
+                const uint8_t factorDim,
+                const uint32_t seed, 
+                const float threshold)
+{
+    const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+    const int warpId = (threadIdx.x + blockIdx.x * blockDim.x) / warpSize;
+    const int warpLane = threadIdx.x % warpSize;
+
+    if(warpId < height) {
+        fast_kiss_state32_t state = get_initial_fast_kiss_state32(seed + tid);
+        const int i = warpId;
+        const int j = warpLane;
+
+        A[i * factorDim + j] = j < factorDim ? fast_kiss32(state) < threshold : 0;
+    }
+}
+
 // distance kernels ---------------------------------------------------------------
 template<typename bit_vector_t>
 __global__
@@ -323,12 +369,12 @@ vectorMatrixMultCompareRowWarpShared(bit_vector_t *A,
                 const int product_new = (B_j & A_i_changed) ? 1 : 0;
                 const int product_old = (B_j & A_i        ) ? 1 : 0;
 
-                const float count_new = __popc(B_j & A_i_changed);
-                const float count_old = __popc(B_j & A_i);
+                // const float count_new = __popc(B_j & A_i_changed);
+                // const float count_old = __popc(B_j & A_i);
 
                 // if (col < width)
-                error_thread += error_measure(product_new, C_ij, count_new)
-                              - error_measure(product_old, C_ij, count_old);
+                error_thread += error_measure(product_new, C_ij, 0)
+                              - error_measure(product_old, C_ij, 0);
             }
         }
         __syncthreads();
@@ -419,12 +465,12 @@ vectorMatrixMultCompareColWarpShared(const bit_vector_t * __restrict__ A,
                 const int product_new = (A_i & B_j_changed) ? 1 : 0;
                 const int product_old = (A_i & B_j        ) ? 1 : 0;
 
-                const float count_new = __popc(A_i & B_j_changed);
-                const float count_old = __popc(A_i & B_j);
+                // const float count_new = __popc(A_i & B_j_changed);
+                // const float count_old = __popc(A_i & B_j);
 
                 // if (row < height)
-                error_thread += error_measure(product_new, C_ij, count_new)
-                              - error_measure(product_old, C_ij, count_old);
+                error_thread += error_measure(product_new, C_ij, 0)
+                              - error_measure(product_old, C_ij, 0);
             }
         }
         __syncthreads();
@@ -659,8 +705,8 @@ public:
     CuBin(const factor_matrix_t& A,
           const factor_matrix_t& B,
           const bit_matrix_t& C,
-          const uint8_t factorDim = 20,
-          const float density = 0.99f)
+          const uint8_t factorDim,
+          const float density)
     {
         cout << "~~~ GPU CuBin ~~~" << endl; 
 
@@ -668,7 +714,7 @@ public:
         cudaDeviceProp prop;
         cudaGetDeviceProperties(&prop, device_id);
 
-        std::cout << "Using device " << device_id << ": " << prop.name << std::endl;
+        cout << "Using device " << device_id << ": " << prop.name << endl;
 
         max_parallel_lines_ = prop.multiProcessorCount * WARPSPERBLOCK;
 
@@ -678,17 +724,10 @@ public:
         }
         else factorDim_ = factorDim;
 
+        density_ = density;
         inverse_density_ = 1 / density;
 
-        initialize(A, B, C);
-    }
-
-    ~CuBin() {
-        clear();
-    }
-
-    bool initialize(const factor_matrix_t& A, const factor_matrix_t& B, const bit_matrix_t& C) {
-        if (std::is_same<factor_t, uint32_t>::value) {
+        if(std::is_same<factor_t, uint32_t>::value) {
             lineSize_ = 1;
             lineSize_padded_ = 1;
         }
@@ -697,24 +736,32 @@ public:
             lineSize_padded_ = 32;
         }
 
-        if( SDIV(A.size()/lineSize_,32) * B.size()/lineSize_ != C.size()) {
-            std::cerr << "CuBin construction: Matrix dimension mismatch." << std::endl;
+        initialize(A, B, C);
+    }
+
+    ~CuBin() {
+        clear();
+    }
+
+    bool initialize(const bit_matrix_t& C, const size_t height, const size_t width) {
+
+        if( SDIV(height,32) * width != C.size()) {
+            std::cerr << "CuBin construction: Matrix dimension mismatch." << endl;
             return false;
         }
 
         if(initialized_) {
-            std::cerr << "CuBin already initialized. Please clear CuBin before reinitialization." << std::endl;
+            std::cerr << "CuBin already initialized. Please clear CuBin before reinitialization." << endl;
             return false;
         }
 
-        size_t lineBytes = sizeof(factor_t) * lineSize_;
         size_t lineBytes_padded = sizeof(factor_t) * lineSize_padded_;
 
-        height_ = A.size() / lineSize_;
-        // size_t height__padded = SDIV(height_, WARPSPERBLOCK) * WARPSPERBLOCK;
+        height_ = height;
+        // size_t height_padded = SDIV(height_, WARPSPERBLOCK) * WARPSPERBLOCK;
         cudaMalloc(&d_A, lineBytes_padded * height_); CUERR
 
-        width_ = B.size() / lineSize_;
+        width_ = width;
         // size_t width_padded = SDIV(width_, WARPSPERBLOCK) * WARPSPERBLOCK;
         cudaMalloc(&d_B, lineBytes_padded * width_); CUERR
         
@@ -722,46 +769,223 @@ public:
         width_C_padded_ = SDIV(width_, 32) * 32;
         cudaMalloc(&d_C, sizeof(bit_vector_t) * height_C * width_C_padded_); CUERR
 
-        cudaMemcpy2D(d_A, lineBytes_padded,
-                     A.data(), lineBytes,
-                     lineBytes,
-                     height_,
-                     cudaMemcpyHostToDevice); CUERR
-        cudaMemcpy2D(d_B, lineBytes_padded,
-                     B.data(), lineBytes,
-                     lineBytes,
-                     width_,
-                     cudaMemcpyHostToDevice); CUERR
         cudaMemcpy2D(d_C, sizeof(bit_vector_t) * width_C_padded_,
                      C.data(), sizeof(bit_vector_t) * width_,
                      sizeof(bit_vector_t) * width_,
                      height_C,
                      cudaMemcpyHostToDevice); CUERR
 
-
         cudaMallocHost(&distance_, sizeof(int)); CUERR
         cudaMalloc(&d_distance_, sizeof(int)); CUERR
         cudaMemset(d_distance_, 0, sizeof(int)); CUERR
 
-        computeDistanceRowsShared <<< SDIV(height_, WARPSPERBLOCK), WARPSPERBLOCK*32 >>>
-                        (d_A, d_B, d_C, height_, width_, width_C_padded_,
-                         factorDim_, inverse_density_, d_distance_);
+        cout << "CuBin initialization complete." << endl;
 
-        cudaDeviceSynchronize(); CUERR
-
-        cudaMemcpy(distance_, d_distance_, sizeof(int), cudaMemcpyDeviceToHost); CUERR
-
-        std::cout << "CuBin initialization complete." << endl;
-
-        std::cout << "Matrix dimensions:\t" << height_ << "x" << width_ << endl;
-        std::cout << "Factor dimension:\t" << (int) factorDim_ << endl;
-
-        std::cout << "Start distance: "
-                  << "\tabs_err: " << *distance_
-                  << "\trel_err: " << (float) *distance_ / (height_ * width_)
-                  << std::endl;
+        cout << "Matrix dimensions:\t" << height_ << "x" << width_ << endl;
+        cout << "Factor dimension:\t" << (int) factorDim_ << endl;
 
         return initialized_ = true;
+    }
+
+    // initialize factors as copy of host vectors
+    bool initializeFactors(const factor_matrix_t& A, const factor_matrix_t& B, cudaStream_t stream = 0) {
+        if( A.size() != height_ * lineSize_ || B.size() != width_ * lineSize_) {
+            std::cerr << "CuBin initialization: Factor dimension mismatch." << endl;
+            return false;
+        }
+
+        size_t lineBytes = sizeof(factor_t) * lineSize_;
+        size_t lineBytes_padded = sizeof(factor_t) * lineSize_padded_;
+
+        cudaMemcpy2DAsync(d_A, lineBytes_padded,
+                     A.data(), lineBytes,
+                     lineBytes,
+                     height_,
+                     cudaMemcpyHostToDevice,
+                     stream);
+        // cudaStreamSynchronize(stream); CUERR
+
+        cudaMemcpy2DAsync(d_B, lineBytes_padded,
+                     B.data(), lineBytes,
+                     lineBytes,
+                     width_,
+                     cudaMemcpyHostToDevice,
+                     stream);
+        // cudaStreamSynchronize(stream); CUERR
+
+        cudaMemsetAsync(d_distance_, 0, sizeof(int), stream);
+        // cudaStreamSynchronize(stream); CUERR
+
+        computeDistanceRowsShared <<< SDIV(height_, WARPSPERBLOCK), WARPSPERBLOCK*32, 0, stream >>>
+                        (d_A, d_B, d_C, height_, width_, width_C_padded_,
+                         factorDim_, inverse_density_, d_distance_);
+        // cudaStreamSynchronize(stream); CUERR
+
+        cudaMemcpyAsync(distance_, d_distance_, sizeof(int), cudaMemcpyDeviceToHost, stream);
+        cudaStreamSynchronize(stream); CUERR
+
+        cout << "Factor initialization complete." << endl;
+
+        cout << "Start distance: "
+             << "\tabs_err: " << *distance_
+             << "\trel_err: " << (float) *distance_ / (height_ * width_)
+             << endl;
+
+        return true;
+    }
+
+    // initialize factors on device according to INITIALIZATIONMODE
+    bool initializeFactors(cudaStream_t stream = 0) {
+        float threshold;
+
+        switch(INITIALIZATIONMODE) {
+            case 1:
+                threshold = (sqrt(1 - pow(1 - density_, float(1) / factorDim_)));
+                break;
+            case 2:
+                threshold = (density_ / 100);
+                break;
+            case 3:
+                threshold = (density_);
+                break;
+        }
+        
+        uint32_t seed = 0;
+        initFactor <<< SDIV(height_, WARPSPERBLOCK*32/lineSize_padded_), WARPSPERBLOCK*32, 0, stream >>>
+                    (d_A, height_, factorDim_, seed, threshold);
+        // cudaStreamSynchronize(stream); CUERR
+
+        seed += height_;
+        initFactor <<< SDIV(width_, WARPSPERBLOCK*32/lineSize_padded_), WARPSPERBLOCK*32, 0, stream >>>
+                    (d_B, width_, factorDim_, seed, threshold);
+        // cudaStreamSynchronize(stream); CUERR
+
+        cudaMemsetAsync(d_distance_, 0, sizeof(int), stream);
+        // cudaStreamSynchronize(stream); CUERR
+
+        computeDistanceRowsShared <<< SDIV(height_, WARPSPERBLOCK), WARPSPERBLOCK*32, 0, stream >>>
+                        (d_A, d_B, d_C, height_, width_, width_C_padded_,
+                         factorDim_, inverse_density_, d_distance_);
+        // cudaStreamSynchronize(stream); CUERR
+
+        cudaMemcpyAsync(distance_, d_distance_, sizeof(int), cudaMemcpyDeviceToHost, stream);
+        cudaStreamSynchronize(stream); CUERR
+
+        cout << "Factor initialization complete." << endl;
+
+        cout << "Start distance: "
+             << "\tabs_err: " << *distance_
+             << "\trel_err: " << (float) *distance_ / (height_ * width_)
+             << endl;
+
+        return true;
+    }
+
+
+    bool initialize(const factor_matrix_t& A, const factor_matrix_t& B, const bit_matrix_t& C) {
+        initialize(C, A.size()/lineSize_, B.size()/lineSize_);
+        initializeFactors(A, B);
+        // initializeFactors();
+        return true;
+
+        // if(std::is_same<factor_t, uint32_t>::value) {
+        //     lineSize_ = 1;
+        //     lineSize_padded_ = 1;
+        // }
+        // if(std::is_same<factor_t, float>::value) {
+        //     lineSize_ = factorDim_;
+        //     lineSize_padded_ = 32;
+        // }
+
+        // if( SDIV(A.size()/lineSize_,32) * B.size()/lineSize_ != C.size()) {
+        //     std::cerr << "CuBin construction: Matrix dimension mismatch." << endl;
+        //     return false;
+        // }
+
+        // if(initialized_) {
+        //     std::cerr << "CuBin already initialized. Please clear CuBin before reinitialization." << endl;
+        //     return false;
+        // }
+
+        // size_t lineBytes = sizeof(factor_t) * lineSize_;
+        // size_t lineBytes_padded = sizeof(factor_t) * lineSize_padded_;
+
+        // height_ = A.size() / lineSize_;
+        // // size_t height__padded = SDIV(height_, WARPSPERBLOCK) * WARPSPERBLOCK;
+        // cudaMalloc(&d_A, lineBytes_padded * height_); CUERR
+
+        // width_ = B.size() / lineSize_;
+        // // size_t width_padded = SDIV(width_, WARPSPERBLOCK) * WARPSPERBLOCK;
+        // cudaMalloc(&d_B, lineBytes_padded * width_); CUERR
+        
+        // size_t height_C = SDIV(height_, 32);
+        // width_C_padded_ = SDIV(width_, 32) * 32;
+        // cudaMalloc(&d_C, sizeof(bit_vector_t) * height_C * width_C_padded_); CUERR
+
+        // // cudaMemcpy2D(d_A, lineBytes_padded,
+        // //              A.data(), lineBytes,
+        // //              lineBytes,
+        // //              height_,
+        // //              cudaMemcpyHostToDevice); CUERR
+        // // cudaMemcpy2D(d_B, lineBytes_padded,
+        // //              B.data(), lineBytes,
+        // //              lineBytes,
+        // //              width_,
+        // //              cudaMemcpyHostToDevice); CUERR
+
+        // float threshold;
+
+        // switch(INITIALIZATIONMODE) {
+        //     case 1:
+        //         threshold = (sqrt(1 - pow(1 - density_, float(1) / factorDim_)));
+        //         break;
+        //     case 2:
+        //         threshold = (density_ / 100);
+        //         break;
+        //     case 3:
+        //         threshold = (density_);
+        //         break;
+        // }
+        
+        // uint32_t seed = 0;
+        // initFactor <<< SDIV(height_, WARPSPERBLOCK*32/lineSize_padded_), WARPSPERBLOCK*32 >>>
+        //             (d_A, height_, factorDim_, seed, threshold);
+
+        // seed += height_;
+        // initFactor <<< SDIV(width_, WARPSPERBLOCK*32/lineSize_padded_), WARPSPERBLOCK*32 >>>
+        //             (d_B, width_, factorDim_, seed, threshold);
+
+        // cudaMemcpy2D(d_C, sizeof(bit_vector_t) * width_C_padded_,
+        //              C.data(), sizeof(bit_vector_t) * width_,
+        //              sizeof(bit_vector_t) * width_,
+        //              height_C,
+        //              cudaMemcpyHostToDevice); CUERR
+
+
+        // cudaMallocHost(&distance_, sizeof(int)); CUERR
+        // cudaMalloc(&d_distance_, sizeof(int)); CUERR
+
+        // cudaMemset(d_distance_, 0, sizeof(int)); CUERR
+
+        // computeDistanceRowsShared <<< SDIV(height_, WARPSPERBLOCK), WARPSPERBLOCK*32 >>>
+        //                 (d_A, d_B, d_C, height_, width_, width_C_padded_,
+        //                  factorDim_, inverse_density_, d_distance_);
+
+        // cudaDeviceSynchronize(); CUERR
+
+        // cudaMemcpy(distance_, d_distance_, sizeof(int), cudaMemcpyDeviceToHost); CUERR
+
+        // cout << "CuBin initialization complete." << endl;
+
+        // cout << "Matrix dimensions:\t" << height_ << "x" << width_ << endl;
+        // cout << "Factor dimension:\t" << (int) factorDim_ << endl;
+
+        // cout << "Start distance: "
+        //      << "\tabs_err: " << *distance_
+        //      << "\trel_err: " << (float) *distance_ / (height_ * width_)
+        //      << endl;
+
+        // return initialized_ = true;
     }
 
     bool verifyDistance() {
@@ -787,9 +1011,11 @@ public:
 
         bool equal = *distance_ == *distance_proof;
         if(!equal) {
-            std::cout << "----- !Distances differ! -----\n";
-            std::cout << "Running distance:  " << *distance_ << "\n";
-            std::cout << "Real distance:     " << *distance_proof << std::endl;
+            cout << "----- !Distances differ! -----\n";
+            cout << "Running distance:  " << *distance_ << "\n";
+            cout << "Real distance:     " << *distance_proof << endl;
+        } else {
+            cout << "Distance verified" << endl;
         }
 
         cudaFreeHost(distance_proof);
@@ -832,12 +1058,12 @@ public:
                      cudaMemcpyDeviceToHost); CUERR
     }
 
-    int getDistance() {
+    int getDistance(cudaStream_t stream = 0) {
         if(!initialized_) {
             std::cerr << "CuBin not initialized." << endl;
             return -1;
         }
-        cudaMemcpy(distance_, d_distance_, sizeof(int), cudaMemcpyDeviceToHost); CUERR
+        cudaMemcpyAsync(distance_, d_distance_, sizeof(int), cudaMemcpyDeviceToHost, stream); CUERR
         return *distance_;
     }
 
@@ -858,7 +1084,7 @@ public:
         size_t stuckIterationsBeforeBreak = std::numeric_limits<size_t>::max();
     };
 
-    void run(const CuBin_config& config) {
+    void run(const CuBin_config& config, cudaStream_t stream = 0) {
         if(!initialized_) {
             std::cerr << "CuBin not initialized." << endl;
             return;
@@ -871,21 +1097,21 @@ public:
         }
 
         if(config.verbosity > 0) {
-            std::cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n";
-            std::cout << "- - - - Starting " << config.maxIterations
-                      << " GPU iterations, changing " << linesAtOnce
-                      << " lines each time\n";
-            std::cout << "- - - - Showing error every " << config.distanceShowEvery
-                      << " steps\n";
+            cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n";
+            cout << "- - - - Starting " << config.maxIterations
+                 << " GPU iterations, changing " << linesAtOnce
+                 << " lines each time\n";
+            cout << "- - - - Showing error every " << config.distanceShowEvery
+                 << " steps\n";
             if(config.tempStart > 0) {
-                std::cout << "- - - - Start temperature " << config.tempStart
-                          << " multiplied by " << config.tempFactor
-                          << " every " << config.tempStep
-                          << " steps\n";
+                cout << "- - - - Start temperature " << config.tempStart
+                     << " multiplied by " << config.tempFactor
+                     << " every " << config.tempStep
+                     << " steps\n";
 
             }
-            std::cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -";
-            std::cout << std::endl;
+            cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -";
+            cout << endl;
         }
 
         fast_kiss_state32_t state = get_initial_fast_kiss_state32(config.seed);
@@ -894,8 +1120,7 @@ public:
         size_t stuckIterations = 0;
         auto distancePrev = *distance_;
         while(
-                // *distance_ > config.distanceThreshold
-                // &&
+                *distance_ > config.distanceThreshold &&
                 iteration++ < config.maxIterations
                 && temperature > config.tempEnd
                 && stuckIterations < config.stuckIterationsBeforeBreak) {
@@ -905,33 +1130,33 @@ public:
             uint32_t gpuSeed = fast_kiss32(state) + iteration;
 
             vectorMatrixMultCompareRowWarpShared 
-                <<< SDIV(min(linesAtOnce, height_), WARPSPERBLOCK), WARPSPERBLOCK*32 >>>
+                <<< SDIV(min(linesAtOnce, height_), WARPSPERBLOCK), WARPSPERBLOCK*32, 0, stream >>>
                 (d_A, d_B, d_C, height_, width_, width_C_padded_, factorDim_,
                  lineToBeChanged, d_distance_, gpuSeed, temperature/10,
                  config.flipManyChance, config.flipManyDepth, inverse_density_);
 
-            cudaDeviceSynchronize(); CUERR
+            // cudaDeviceSynchronize(); CUERR
 
             // Change cols
             lineToBeChanged = (fast_kiss32(state) % width_) / WARPSPERBLOCK * WARPSPERBLOCK;
             gpuSeed = fast_kiss32(state) + iteration;
 
             vectorMatrixMultCompareColWarpShared 
-                <<< SDIV(min(linesAtOnce, width_), WARPSPERBLOCK), WARPSPERBLOCK*32 >>>
+                <<< SDIV(min(linesAtOnce, width_), WARPSPERBLOCK), WARPSPERBLOCK*32, 0, stream >>>
                 (d_A, d_B, d_C, height_, width_, width_C_padded_, factorDim_,
                  lineToBeChanged, d_distance_, gpuSeed, temperature/10,
                  config.flipManyChance, config.flipManyDepth, inverse_density_);
 
-            cudaDeviceSynchronize(); CUERR
+            cudaStreamSynchronize(stream); CUERR
 
-            getDistance();
+            getDistance(stream);
 
             if(config.verbosity > 0 && iteration % config.distanceShowEvery == 0) {
-                std::cout << "Iteration: " << iteration
-                          << "\tabs_err: " << *distance_
-                          << "\trel_err: " << (float) *distance_ / (height_*width_)
-                          << "\ttemp: " << temperature;
-                std::cout << std::endl;
+                cout << "Iteration: " << iteration
+                     << "\tabs_err: " << *distance_
+                     << "\trel_err: " << (float) *distance_ / (height_*width_)
+                     << "\ttemp: " << temperature;
+                cout << endl;
             }
             if(iteration % config.tempStep == 0) {
                 temperature *= config.tempFactor;
@@ -945,19 +1170,19 @@ public:
 
         if(config.verbosity > 0) {
             if (!(iteration < config.maxIterations))
-                std::cout << "Reached iteration limit: " << config.maxIterations << std::endl;
+                cout << "Reached iteration limit: " << config.maxIterations << endl;
             if (!(*distance_ > config.distanceThreshold))
-                std::cout << "Distance below threshold." << std::endl;
+                cout << "Distance below threshold." << endl;
             if (!(temperature > config.tempEnd))
-                std::cout << "Temperature below threshold." << std::endl;
+                cout << "Temperature below threshold." << endl;
             if (!(stuckIterations < config.stuckIterationsBeforeBreak))
-                std::cout << "Stuck for " << stuckIterations << " iterations." << std::endl;
+                cout << "Stuck for " << stuckIterations << " iterations." << endl;
         }
-        std::cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n";
-        std::cout << "Final result: "
-                  << "\tabs_err: " << *distance_
-                  << "\trel_err: " << (float) *distance_ / (height_ * width_)
-                  << std::endl;
+        cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n";
+        cout << "Final result: "
+             << "\tabs_err: " << *distance_
+             << "\trel_err: " << (float) *distance_ / (height_ * width_)
+             << endl;
     }  
 
 private:
@@ -968,6 +1193,7 @@ private:
     factor_t *d_A;
     factor_t *d_B;
     bit_vector_t *d_C;
+    float density_;
     int inverse_density_;
     int *distance_;
     int *d_distance_;

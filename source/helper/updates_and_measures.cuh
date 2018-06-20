@@ -33,7 +33,8 @@ uint32_t get_flip_mask(const uint8_t factorDim, fast_kiss_state32_t state,
                        const uint32_t flipManyDepth) {
     const float random_many = fast_kiss32(state) / (float) UINT32_MAX;
 
-    return random_many < flipManyChance ? get_flip_mask_many(factorDim, state, flipManyDepth) : get_flip_mask_one(factorDim, state);
+    return random_many < flipManyChance ? get_flip_mask_many(factorDim, state, flipManyDepth)
+                                        : get_flip_mask_one(factorDim, state);
     // return random_many < flipManyChance ? get_flip_mask_all() : get_flip_mask_one(state);
 }
 
@@ -80,14 +81,14 @@ bool metro(fast_kiss_state32_t state, const error_t error, const float temperatu
 template<typename error_t>
 __inline__ __device__ __host__
 error_t error_measure0(const int test, const int truth, const error_t weigth) {
-    return (truth == 1) ? (weigth-1) * (test ^ truth) : (test ^ truth);
+    return (truth == 1) ? weigth * (test ^ truth) : (test ^ truth);
 }
 
-// template<typename error_t>
-// __inline__ __device__ __host__
-// error_t error_measure(const int test, const int truth, const error_t weigth_1, const error_t weigth_0) {
-//     return (truth == 1) ? weigth_1 * (test ^ truth) : weigth_0 * (test ^ truth);
-// }
+template<typename error_t>
+__inline__ __device__ __host__
+error_t error_measure(const int test, const int truth, const error_t weigth_1, const error_t weigth_0) {
+    return (truth == 1) ? weigth_1 * (test ^ truth) : weigth_0 * (test ^ truth);
+}
 
 // template<typename error_t>
 // __inline__ __device__ __host__
@@ -108,7 +109,7 @@ error_t error_measurew(const int test, const int truth, const error_t weigth_0) 
 
 __inline__ __device__ __host__
 int error_measure(const int test, const int truth, const int inverse_density) {
-    return (truth == 1) ? 4 * (test ^ truth) : (test ^ truth);
+    return (truth == 1) ? 1 * (test ^ truth) : (test ^ truth);
 }
 
 // __inline__ __device__ __host__

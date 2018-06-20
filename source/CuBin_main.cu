@@ -91,7 +91,7 @@ int main(int argc, char **argv) {
         width = 4000;
         // height = 5*1024;
         // width = 5*1024;
-        generate_random_matrix(height, width, factorDim, 3, A0_vec, B0_vec, C0_vec, density);
+        generate_random_matrix(height, width, factorDim, 4, A0_vec, B0_vec, C0_vec, density);
     } else {
         cerr << "Wrong data file" << endl;
         return 0;
@@ -125,7 +125,16 @@ int main(int argc, char **argv) {
     // auto C = computeProductCOO(A_vec, B_vec, height, width);
     // cout << "Nonzeros in product: " << C.size() << endl;
 
-    computeErrorsCPU(A_vec, B_vec, C0_vec, height, width);
+    auto confusion = computeErrorsCPU(A_vec, B_vec, C0_vec, height, width);
+
+    cout << "true_positives: \t" << confusion.TP << '\t';
+    cout << "true_negatives: \t" << confusion.TN << '\n';
+    cout << "false_positives:\t" << confusion.FP << '\t';
+    cout << "false_negatives:\t" << confusion.FN << '\n';
+    cout << "total error:\t" << confusion.total_error() << '\t';
+    cout << "rel error:\t" << confusion.rel_error() << endl;
+    cout << "precision:\t" << confusion.precision() << endl;
+    cout << "recall:   \t" << confusion.sensitivity() << endl;
     return 0;
 }
 
