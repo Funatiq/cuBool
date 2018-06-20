@@ -51,6 +51,14 @@ struct confusion_matrix {
 
     confusion_matrix(int tp, int tn, int fp, int fn) : TP(tp), TN(tn), FP(fp), FN(fn) {};
 
+    float precision() {
+        return 1.0f*TP / (TP + FP);
+    }
+
+    float sensitivity() {
+        return 1.0f*TP / (TP + FN);
+    }
+
     float f1score() {
         return 2.0f*TP / (2*TP + FP + FN);
     }
@@ -61,6 +69,14 @@ struct confusion_matrix {
 
     int total_error() {
         return FP + FN;
+    }
+
+    int problem_size() {
+        return TP + TN + FP + FN;
+    }
+
+    float rel_error() {
+        return float(total_error()) / problem_size();
     }
 };
 
@@ -103,12 +119,6 @@ confusion_matrix computeErrorsCPU(const vector<bit_vector_t> &Ab,
             false_negatives +=  C_ij & !product;
         }
     }
-
-    cout << "true_positives: " << true_positives << endl;
-    cout << "true_negatives: " << true_negatives << endl;
-    cout << "false_positives: " << false_positives << endl;
-    cout << "false_negatives: " << false_negatives << endl;
-    cout << "total error: " << false_positives + false_negatives << endl;
 
     return confusion_matrix(true_positives, true_negatives, false_positives, false_negatives);
 }
@@ -313,6 +323,116 @@ vector<error_t> computeInverseDensitiesCols(const vector<bit_vector_t> &Cb,
     }
 
     return inverse_density_cols;
+}
+
+
+template<typename bit_vector_t>
+void updateWholeColumn(vector<bit_vector_t> &Ab,
+                                   const int size_A,
+                                   const uint8_t factorDim,
+                                    const uint8_t k,
+                                    const float density,
+                                    const uint32_t seed)
+{
+    #pragma omp for
+    for (int i = 0; i < size_A; ++i) {
+        fast_kiss_state32_t state;
+        state = get_initial_fast_kiss_state32(seed + i);
+
+        bool set_one = (fast_kiss32(state) / double(UINT32_MAX)) 
+                       < (sqrt(1 - pow(1 - density, 1 / double(factorDim))));
+
+        if (set_one)
+            Ab[i] |= 1 << k;
+        else //set 0
+            Ab[i] &= ~(1 << k);
+    }
+}
+
+template<typename bit_vector_t>
+void updateColumnPart(vector<bit_vector_t> &Ab,
+                                   const int size_A,
+                                   const uint8_t factorDim,
+                                   const uint8_t k,
+                                   const float density,
+                                   const int startline,
+                                   const int numlines,
+                                   const uint32_t seed)
+{
+    #pragma omp for
+    for (int id = 0; id < numlines; ++id) {
+        const int i = (startline + id) % size_A;
+
+        fast_kiss_state32_t state;
+        state = get_initial_fast_kiss_state32(seed + i);
+
+        bool set_one = (fast_kiss32(state) / double(UINT32_MAX))
+                       < (sqrt(1 - pow(1 - density, 1 / double(factorDim))));
+
+        if (set_one)
+            Ab[i] |= 1 << k;
+        else //set 0
+            Ab[i] &= ~(1 << k);
+    }
+}
+
+template<bool transpose, typename bit_vector_t>
+confusion_matrix optimizeWholeColumn(vector<bit_vector_t> &Ab,
+                                   const int size_A,
+                                   const vector<bit_vector_t> &Bb,
+                                   const int size_B,
+                                   const vector<bit_vector_t> &Cb,
+                                   const uint8_t factorDim,
+                                   const uint8_t k)
+{
+    confusion_matrix confusion_new;
+
+    #pragma omp for
+    for (int i = 0; i < size_A; ++i) {
+
+        const bit_vector_t A_i_0 = Ab[i] & ~(1 << k);
+        const bit_vector_t A_i_1 = Ab[i] | (1 << k);
+
+        confusion_matrix confusion_0;
+        confusion_matrix confusion_1;
+
+        for(int j=0; j < size_B; ++j) {
+            const int vecId = transpose ? j / 32 * size_A + i : i / 32 * size_B + j;
+            const int vecLane = transpose ? j % 32 : i % 32;
+            const int C_ij = (Cb[vecId] >> vecLane) & 1;
+
+            // const int product_0 = (A_i_0 & Bb[j] & (1<<k)) ? 1 : 0;
+            // const int product_1 = (A_i_1 & Bb[j] & (1<<k)) ? 1 : 0;
+            const int product_0 = (A_i_0 & Bb[j]) ? 1 : 0;
+            const int product_1 = (A_i_1 & Bb[j]) ? 1 : 0;
+
+            confusion_0.TP += C_ij & product_0;
+            confusion_1.TP += C_ij & product_1;
+
+            confusion_0.FN  += C_ij & !product_0;
+            confusion_1.FN += C_ij & !product_1;
+
+            confusion_0.FP += (!C_ij) & product_0;
+            confusion_1.FP += (!C_ij) & product_1;
+        }
+
+        // if(4*confusion_0.FN + confusion_0.FP <= 4*confusion_1.FN + confusion_1.FP) {
+        if(confusion_0.total_error() <= confusion_1.total_error()) {
+        // if(confusion_0.precision() >= confusion_1.precision()) {
+        // if(confusion_0.jaccard() > confusion_1.jaccard()) {
+            Ab[i] = A_i_0;
+            confusion_new.TP += confusion_0.TP;
+            confusion_new.FN += confusion_0.FN;
+            confusion_new.FP += confusion_0.FP;
+        }
+        else {
+            Ab[i] = A_i_1;
+            confusion_new.TP += confusion_1.TP;
+            confusion_new.FN += confusion_1.FN;
+            confusion_new.FP += confusion_1.FP;
+        }
+    }
+    return confusion_new;
 }
 
 template<bool transpose, typename bit_vector_t>
@@ -608,9 +728,11 @@ public:
             cerr << "Factor dimension too big! Maximum is 32." << endl;
             factorDim_ = 32;
         }
-        else factorDim_ = factorDim;
+        else
+            factorDim_ = factorDim;
 
         // inverse_density_ = 1 / density;
+        density_ = density;
 
         initialize(A, B, C);
     }
@@ -673,6 +795,21 @@ public:
         // cout << endl;
         cout << "cols weight min: " << min << " weight max: " << max << endl;
 
+        B_ = factor_matrix_t(height_, 0);
+        for(int k=0; k<factorDim_; ++k) {
+            // updateWholeColumn(A_, height_, factorDim_, k, density_, seed);
+            optimizeWholeColumn<true>(B_, width_, A_, height_, C_, factorDim_, k);
+        }
+        distance_ = computeHammingDistanceCPU(A_, B_, C_, height_, width_);
+        cout << "Start distance: "
+                  << "\tabs_err: " << distance_
+                  << "\trel_err: " << (float) distance_ / (height_ * width_)
+                  << endl;
+
+        for(int k=0; k<factorDim_; ++k) {
+            // updateWholeColumn(A_, height_, factorDim_, k, density_, seed);
+            optimizeWholeColumn<true>(B_, width_, A_, height_, C_, factorDim_, k);
+        }
         distance_ = computeHammingDistanceCPU(A_, B_, C_, height_, width_);
         // distance_ = computeDistanceCPU(A_, B_, C_, height_, width_, weights_rows_, weights_cols_);
 
@@ -792,69 +929,63 @@ public:
         uint32_t cpuSeed;
         // int all_true_positives = computeTruePositiveCPU(A_, B_, C_, height_, width_);
         // int all_true_positives = computeTruePositiveCPU(A_, B_, C_, height_, width_);
-        auto confusion = computeErrorsCPU(A_, B_, C_, height_, width_);
+        confusion_matrix confusion = computeErrorsCPU(A_, B_, C_, height_, width_);
+        confusion_matrix confusion_new;
+
+        factor_matrix_t A_new, B_new;
+
         #pragma omp parallel firstprivate(iteration)
         while( distance_ > config.distanceThreshold
                 && iteration++ < config.maxIterations
                 && temperature > config.tempEnd
                 && stuckIterations < config.stuckIterationsBeforeBreak)
         {
-            // Change rows
             #pragma omp single
             {
-                lineToBeChanged = (fast_kiss32(state) % height_) / WARPSPERBLOCK * WARPSPERBLOCK;
+                lineToBeChanged = (fast_kiss32(state) % height_);
                 cpuSeed = fast_kiss32(state) + iteration;
 
-                // confusion.TP = computeTruePositiveCPU(A_, B_, C_, height_, width_);
+                confusion_new.TP = 0;
+                confusion_new.FP = 0;
+                confusion_new.FN = 0;
+
+                A_new = A_;
+                B_new = B_;
             }
-
-            // my_error_t update = vectorMatrixMultCompareLineCPU<false>(A_, height_, B_, width_, C_, factorDim_,
-            //                               lineToBeChanged, min(linesAtOnce, height_), cpuSeed, temperature/10,
-            //                               config.flipManyChance, config.flipManyDepth,
-            //                               weights_rows_, weights_cols_);
-            auto confusion_update = updateLinesJaccardCPU<false>(A_, height_, B_, width_, C_, factorDim_,
-                                          lineToBeChanged, min(linesAtOnce, height_), cpuSeed, temperature/10,
-                                          config.flipManyChance, config.flipManyDepth,
-                                          confusion);
-            // implicit barrier
-
-            #pragma omp atomic
-            confusion.TP += confusion_update.TP;
-            #pragma omp atomic
-            confusion.FP += confusion_update.FP;
-            #pragma omp atomic
-            confusion.FN += confusion_update.FN;
-            #pragma omp barrier
+            uint8_t k = iteration % factorDim_;
+            // Change rows
+            // updateWholeColumn(A_new, height_, factorDim_, k, density_, cpuSeed);
+            updateColumnPart(A_new, height_, factorDim_, k, density_,
+                             lineToBeChanged, min(linesAtOnce, height_), cpuSeed);
 
             // Change cols
-            #pragma omp single
-            {
-                lineToBeChanged = (fast_kiss32(state) % width_) / WARPSPERBLOCK * WARPSPERBLOCK;
-                cpuSeed = fast_kiss32(state) + iteration;
-
-                // confusion.TP = computeTruePositiveCPU(A_, B_, C_, height_, width_);
-            }
-
-            // update += vectorMatrixMultCompareLineCPU<true>(B_, width_, A_, height_, C_, factorDim_,
-            //                               lineToBeChanged, min(linesAtOnce, height_), cpuSeed, temperature/10,
-            //                               config.flipManyChance, config.flipManyDepth,
-            //                               weights_cols_, weights_rows_);
-            confusion_update = updateLinesJaccardCPU<true>(B_, width_, A_, height_, C_, factorDim_,
-                                          lineToBeChanged, min(linesAtOnce, height_), cpuSeed, temperature/10,
-                                          config.flipManyChance, config.flipManyDepth,
-                                          confusion);
+            auto confusion_update = optimizeWholeColumn<true>(B_new, width_, A_new, height_, C_, factorDim_, k);
             // implicit barrier
 
             #pragma omp atomic
-            confusion.TP += confusion_update.TP;
+            confusion_new.TP += confusion_update.TP;
             #pragma omp atomic
-            confusion.FP += confusion_update.FP;
+            confusion_new.FP += confusion_update.FP;
             #pragma omp atomic
-            confusion.FN += confusion_update.FN;
+            confusion_new.FN += confusion_update.FN;
             #pragma omp barrier
 
             #pragma omp single
             {
+                // confusion_new = computeErrorsCPU(A_new, B_new, C_, height_, width_);
+
+                if(confusion_new.total_error() < confusion.total_error()) {
+                // if(confusion_new.precision() > confusion.precision()) {
+                // if(confusion_new.jaccard() > confusion.jaccard()) {
+                // if(metro(state, confusion.precision() - confusion_new.precision(), temperature)) {
+                    A_ = A_new;
+                    B_ = B_new;
+
+                    confusion = confusion_new;
+
+                    // cout << "update accepted" << endl;
+                }
+
                 // int hamming;
                 // if(iteration % config.distanceShowEvery == 0) {
                     // distance_ = computeDistanceCPU(A_, B_, C_, height_, width_, weights_rows_, weights_cols_);
@@ -875,12 +1006,6 @@ public:
                     // cout << "\tseed: " << (int) cpuSeed << endl;
                     // update_sum = 0;
 
-                    // if((float) distance_ / tempStep_distance < 0.998f) {
-                    //     temperature /= config.tempFactor;
-                    //     temperature /= config.tempFactor;
-                    //     temperature /= config.tempFactor;
-                    //     temperature /= config.tempFactor;
-                    // }
                     // tempStep_distance = distance_;
                 }
                 if(iteration % config.tempStep == 0) {
@@ -926,6 +1051,7 @@ private:
     vector<my_error_t> weights_rows_;
     vector<my_error_t> weights_cols_;
     // int inverse_density_;
+    float density_;
     my_error_t distance_;
     // size_t height_padded;
     uint8_t factorDim_ = 20;
