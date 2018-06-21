@@ -130,6 +130,23 @@ public:
         return initialized_ = true;
     }
 
+    void clear() {
+        if(initialized_) {
+            cudaFree(d_C);
+            for(auto& e : activeExperiments) {
+                cudaFree(e.d_A);
+                cudaFree(e.d_B);
+                cudaFreeHost(e.distance_);
+                cudaFree(e.d_distance_);
+            }
+            cudaFreeHost(bestFactors.d_A);
+            cudaFreeHost(bestFactors.d_B);
+            cudaFreeHost(bestFactors.distance_);
+
+            initialized_ = false;
+        }
+    }
+
     // initialize factors as copy of host vectors
     bool initializeFactors(const size_t activeId,
                            const factor_matrix_t& A,
@@ -275,23 +292,6 @@ public:
         return equal;
     } 
 
-    void clear() {
-        if(initialized_) {
-            cudaFree(d_C);
-            for(auto& e : activeExperiments) {
-                cudaFree(e.d_A);
-                cudaFree(e.d_B);
-                cudaFreeHost(e.distance_);
-                cudaFree(e.d_distance_);
-            }
-            cudaFreeHost(bestFactors.d_A);
-            cudaFreeHost(bestFactors.d_B);
-            cudaFreeHost(bestFactors.distance_);
-
-            initialized_ = false;
-        }
-    }
-
     void getFactors(const size_t activeId, factor_matrix_t& A, factor_matrix_t& B, const cudaStream_t stream = 0) {
         auto& handler = activeExperiments[activeId];
 
@@ -379,7 +379,7 @@ public:
         #pragma omp parallel for //schedule(dynamic,1)
         for(size_t i=0; i<numExperiments; ++i) {
             unsigned id = omp_get_thread_num();
-            #pragma omp ciritcal
+            #pragma omp critical
             cout << "Starting run " << i << " in slot " << id << endl;
             initializeFactors(id, factorDim, seed+id);
             run(id, config);
@@ -423,6 +423,7 @@ public:
         size_t iteration = 0;
         size_t stuckIterations = 0;
         auto distancePrev = *handler.distance_;
+        size_t syncStep = 100;
         while(
                 *handler.distance_ > config.distanceThreshold &&
                 iteration++ < config.maxIterations
@@ -451,8 +452,16 @@ public:
                  config.flipManyChance, config.flipManyDepth, inverse_density_);
             // cudaStreamSynchronize(stream); CUERR
 
-            cudaMemcpyAsync(handler.distance_, handler.d_distance_, sizeof(int), cudaMemcpyDeviceToHost, stream);
-            cudaStreamSynchronize(stream); CUERR
+            if(iteration % syncStep == 0) {
+                cudaMemcpyAsync(handler.distance_, handler.d_distance_, sizeof(int), cudaMemcpyDeviceToHost, stream);
+                cudaStreamSynchronize(stream); CUERR
+
+                if(*handler.distance_ == distancePrev)
+                    stuckIterations += syncStep;
+                else
+                    stuckIterations = 0;
+                distancePrev = *handler.distance_;
+            }
 
             if(config.verbosity > 0 && iteration % config.distanceShowEvery == 0) {
                 cout << "Iteration: " << iteration
@@ -464,11 +473,6 @@ public:
             if(iteration % config.tempStep == 0) {
                 temperature *= config.tempFactor;
             }
-            if(*handler.distance_ == distancePrev)
-                stuckIterations++;
-            else
-                stuckIterations = 0;
-            distancePrev = *handler.distance_;
         }
 
         if(config.verbosity > 0) {
