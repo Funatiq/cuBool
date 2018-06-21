@@ -104,14 +104,17 @@ int main(int argc, char **argv) {
     // writeToFiles(filename + "_start", A_vec, B_vec, height, width, factorDim);
 
     // copy matrices to GPU and run optimization
-    auto cubin = my_cubin(A_vec, B_vec, C0_vec, factorDim, density);
     // auto cubin = my_cubin(A_vec, B_vec, C0_vec, factorDim, density);
+    auto cubin = my_cubin(C0_vec, height, width, density);
+    // cubin.initializeFactors(A_vec, B_vec);
+    cubin.initializeFactors();
+
     auto distance = cubin.getDistance();
-    cubin.verifyDistance();
+    // cubin.verifyDistance();
     TIMERSTART(GPUKERNELLOOP)
     cubin.run(config);
     TIMERSTOP(GPUKERNELLOOP)
-    cubin.verifyDistance();
+    // cubin.verifyDistance();
 
     cubin.getFactors(A_vec, B_vec);
     cubin.clear();

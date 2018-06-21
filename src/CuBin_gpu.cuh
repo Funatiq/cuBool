@@ -26,10 +26,9 @@ class CuBin
     using bit_matrix_t = std::vector<bit_vector_t>;
 
 public:
-    CuBin(const factor_matrix_t& A,
-          const factor_matrix_t& B,
-          const bit_matrix_t& C,
-          const uint8_t factorDim,
+    CuBin(const bit_matrix_t& C,
+          const size_t height,
+          const size_t width,
           const float density)
     {
         cout << "~~~ GPU CuBin ~~~" << endl; 
@@ -42,32 +41,17 @@ public:
 
         max_parallel_lines_ = prop.multiProcessorCount * WARPSPERBLOCK;
 
-        if(factorDim > 32) {
-            std::cerr << "Factor dimension too big! Maximum is 32." << endl;
-            factorDim_ = 32;
-        }
-        else factorDim_ = factorDim;
-
         density_ = density;
         inverse_density_ = 1 / density;
 
-        if(std::is_same<factor_t, uint32_t>::value) {
-            lineSize_ = 1;
-            lineSize_padded_ = 1;
-        }
-        if(std::is_same<factor_t, float>::value) {
-            lineSize_ = factorDim_;
-            lineSize_padded_ = 32;
-        }
-
-        initialize(A, B, C);
+        initializeMatrix(C, height, width);
     }
 
     ~CuBin() {
         clear();
     }
 
-    bool initialize(const bit_matrix_t& C, const size_t height, const size_t width) {
+    bool initializeMatrix(const bit_matrix_t& C, const size_t height, const size_t width) {
 
         if( SDIV(height,32) * width != C.size()) {
             std::cerr << "CuBin construction: Matrix dimension mismatch." << endl;
@@ -106,13 +90,21 @@ public:
         cout << "CuBin initialization complete." << endl;
 
         cout << "Matrix dimensions:\t" << height_ << "x" << width_ << endl;
-        cout << "Factor dimension:\t" << (int) factorDim_ << endl;
 
         return initialized_ = true;
     }
 
     // initialize factors as copy of host vectors
     bool initializeFactors(const factor_matrix_t& A, const factor_matrix_t& B, cudaStream_t stream = 0) {
+        if(std::is_same<factor_t, uint32_t>::value) {
+            lineSize_ = 1;
+            lineSize_padded_ = 1;
+        }
+        if(std::is_same<factor_t, float>::value) {
+            lineSize_ = factorDim_;
+            lineSize_padded_ = 32;
+        }
+
         if( A.size() != height_ * lineSize_ || B.size() != width_ * lineSize_) {
             std::cerr << "CuBin initialization: Factor dimension mismatch." << endl;
             return false;
@@ -160,6 +152,15 @@ public:
 
     // initialize factors on device according to INITIALIZATIONMODE
     bool initializeFactors(cudaStream_t stream = 0) {
+        if(std::is_same<factor_t, uint32_t>::value) {
+            lineSize_ = 1;
+            lineSize_padded_ = 1;
+        }
+        if(std::is_same<factor_t, float>::value) {
+            lineSize_ = factorDim_;
+            lineSize_padded_ = 32;
+        }
+
         float threshold = getInitChance(density_, factorDim_);
         
         uint32_t seed = 0;
@@ -190,14 +191,6 @@ public:
              << "\trel_err: " << (float) *distance_ / (height_ * width_)
              << endl;
 
-        return true;
-    }
-
-
-    bool initialize(const factor_matrix_t& A, const factor_matrix_t& B, const bit_matrix_t& C) {
-        initialize(C, A.size()/lineSize_, B.size()/lineSize_);
-        initializeFactors(A, B);
-        // initializeFactors();
         return true;
     }
 
