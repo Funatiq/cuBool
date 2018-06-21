@@ -1,5 +1,5 @@
 FLAGS = -std=c++11 -fopenmp -O3
-NVCC_FLAGS = -std=c++11 -arch=sm_61 -Xcompiler="-fopenmp" -O3 -lineinfo -ccbin=g++-7
+NVCC_FLAGS = -std=c++11 -arch=sm_61 -Xcompiler="-fopenmp" -O3 -lineinfo -ccbin=g++-7 --default-stream per-thread
 DEBUG = -g -G
 
 HEADERS = \
