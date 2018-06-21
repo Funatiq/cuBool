@@ -98,25 +98,27 @@ int main(int argc, char **argv) {
 
     // Initialize Ab, Bb bitvector matrices
     vector<my_bit_vector_t> A_vec, B_vec;
-    initializeFactors(A_vec, B_vec, height, width, factorDim, density, state);
+    // initializeFactors(A_vec, B_vec, height, width, factorDim, density, state);
 
     // computeHammingDistanceCPU(A_vec, B_vec, C0_vec, height, width);
     // writeToFiles(filename + "_start", A_vec, B_vec, height, width, factorDim);
 
     // copy matrices to GPU and run optimization
     // auto cubin = my_cubin(A_vec, B_vec, C0_vec, factorDim, density);
-    auto cubin = my_cubin(C0_vec, height, width, density);
+    auto cubin = my_cubin(C0_vec, height, width, density, 4);
     // cubin.initializeFactors(A_vec, B_vec);
-    cubin.initializeFactors();
+    // cubin.initializeFactors(0, factorDim, fast_kiss32(state));
 
-    auto distance = cubin.getDistance();
+    // auto distance = cubin.getDistance();
     // cubin.verifyDistance();
     TIMERSTART(GPUKERNELLOOP)
-    cubin.run(config);
+    // cubin.run(0, config);
+    cubin.runAllParallel(8, config);
     TIMERSTOP(GPUKERNELLOOP)
     // cubin.verifyDistance();
 
-    cubin.getFactors(A_vec, B_vec);
+    // cubin.getFactors(0, A_vec, B_vec);
+    cubin.getBestFactors(A_vec, B_vec);
     cubin.clear();
 
     writeToFiles(filename + "_end", A_vec, B_vec, height, width, factorDim);
