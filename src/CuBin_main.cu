@@ -3,12 +3,11 @@
 #include <string>
 // #include <limits>
 
-#include "helper/config.h"
 #include "helper/rngpu.hpp"
-#include "helper/io_and_allocation.hpp"
-
 #include "helper/args_parser.h"
 
+#include "config.h"
+#include "io_and_allocation.hpp"
 #include "CuBin_gpu.cuh"
 #include "CuBin_cpu.h"
 

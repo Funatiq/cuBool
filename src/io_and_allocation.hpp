@@ -14,7 +14,7 @@
 #include <cmath> // log2
 
 #include "config.h"
-#include "rngpu.hpp"
+#include "helper/rngpu.hpp"
 
 // safe division
 #ifndef SDIV
@@ -27,6 +27,27 @@ using std::cerr;
 using std::endl;
 using std::string;
 using std::vector;
+
+
+float getInitChance(float density, uint8_t factorDim) {
+    float threshold;
+
+    switch(INITIALIZATIONMODE) {
+        case 1:
+            threshold = (sqrt(1 - pow(1 - density, float(1) / factorDim)));
+            break;
+        case 2:
+            threshold = (density / 100);
+            break;
+        case 3:
+            threshold = (density);
+            break;
+        default:
+            threshold = 0;
+            break;
+    }
+    return threshold;
+}
 
 void generate_random_matrix(const int height, const int width, const uint8_t factorDim, const int num_kiss, 
                             vector<uint32_t> &Ab, vector<uint32_t> &Bb, vector<uint32_t> &C0b,
@@ -226,19 +247,8 @@ void initializeFactors( vector<uint32_t> &Ab, vector<uint32_t> &Bb,
     Bb.clear();
     Bb.resize(width, 0);
 
-    double threshold;
+    float threshold = getInitChance(density, factorDim);
 
-    switch(INITIALIZATIONMODE) {
-        case 1:
-            threshold = (sqrt(1 - pow(1 - density, 1 / (double) factorDim)));
-            break;
-        case 2:
-            threshold = (density / (double) 100);
-            break;
-        case 3:
-            threshold = (density);
-            break;
-    }
     const int rand_depth = -log2(threshold)+1;
     // const int rand_depth = 5;
 
@@ -287,19 +297,8 @@ void initializeFactors2( vector<uint32_t> &Ab, vector<uint32_t> &Bb,
     Bb.clear();
     Bb.resize(width, 0);
 
-    uint32_t threshold = UINT32_MAX;
+    uint32_t threshold = UINT32_MAX * getInitChance(density, factorDim);
 
-    switch(INITIALIZATIONMODE) {
-        case 1:
-            threshold *= (sqrt(1 - pow(1 - density, 1 / (double) factorDim)));
-            break;
-        case 2:
-            threshold *= (density / (double) 100);
-            break;
-        case 3:
-            threshold *= density;
-            break;
-    }
     cout << "Init threshold: " << float(threshold)/UINT32_MAX << endl;
 
     // Initialize A and B
@@ -373,19 +372,7 @@ void initializeFactors2( vector<float> &A, vector<float> &B,
     B.clear();
     B.resize(width * factorDim, 0);
 
-    uint32_t threshold = UINT32_MAX;
-
-    switch(INITIALIZATIONMODE) {
-        case 1:
-            threshold *= (sqrt(1 - pow(1 - density, 1 / (double) factorDim)));
-            break;
-        case 2:
-            threshold *= (density / (double) 100);
-            break;
-        case 3:
-            threshold *= density;
-            break;
-    }
+    uint32_t threshold = UINT32_MAX * getInitChance(density, factorDim);
 
     // Initialize A and B
     for (int i = 0; i < height; i++) {

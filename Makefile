@@ -3,23 +3,25 @@ NVCC_FLAGS = -std=c++11 -arch=sm_61 -Xcompiler="-fopenmp" -O3 -lineinfo -ccbin=g
 DEBUG = -g -G
 
 HEADERS = \
-	source/CuBin_gpu.cuh \
-	source/CuBin_cpu.h \
-	source/helper/config.h \
-	source/helper/cuda_helpers.cuh \
-	source/helper/rngpu.hpp \
-	source/helper/io_and_allocation.hpp \
-	source/helper/args_parser.h \
-	source/helper/updates_and_measures.cuh
+	src/CuBin_gpu.cuh \
+	src/bit_vector_kernels.cuh \
+	src/float_kernels.cuh \
+	src/CuBin_cpu.h \
+	src//config.h \
+	src//io_and_allocation.hpp \
+	src//updates_and_measures.cuh \
+	src/helper/args_parser.h \
+	src/helper/rngpu.hpp \
+	src/helper/cuda_helpers.cuh
 
 
 all: CuBin
 
-CuBin: source/CuBin_main.cu $(HEADERS)
-	nvcc source/CuBin_main.cu $(NVCC_FLAGS) -o CuBin
+CuBin: src/CuBin_main.cu $(HEADERS)
+	nvcc src/CuBin_main.cu $(NVCC_FLAGS) -o CuBin
 
-# cpu: source/CuBin_main.cu $(HEADERS)
-# 	$(CC) source/CuBin_main.cu $(FLAGS) -o CuBin
+# cpu: src/CuBin_main.cu $(HEADERS)
+# 	$(CC) src/CuBin_main.cu $(FLAGS) -o CuBin
 
 debug: NVCC_FLAGS += $(DEBUG)
 debug: CuBin test_distance

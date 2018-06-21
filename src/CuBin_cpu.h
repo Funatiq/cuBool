@@ -6,9 +6,10 @@
 #include <limits>
 #include <cmath>
 
-#include "helper/config.h"
 #include "helper/rngpu.hpp"
-#include "helper/updates_and_measures.cuh"
+
+#include "config.h"
+#include "updates_and_measures.cuh"
 
 using std::vector;
 using std::cout;

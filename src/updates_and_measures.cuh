@@ -1,8 +1,8 @@
 #ifndef UPDATES_CUH
 #define UPDATES_CUH
 
-#include "cuda_helpers.cuh"
-#include "rngpu.hpp"
+#include "helper/cuda_helpers.cuh"
+#include "helper/rngpu.hpp"
 
 // uint32_t vector masks --------------------------------------------------------
 __inline__ __device__ __host__
