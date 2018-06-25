@@ -393,13 +393,11 @@ void initializeFactors2( vector<float> &A, vector<float> &B,
     printf("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
 }
 
-// Write result matrix in file
-void writeToFiles(const string filename,
-                  const vector<uint32_t> &Ab,
-                  const vector<uint32_t> &Bb,
-                  const int height,
-                  const int width,
-                  const uint8_t factorDim)
+// Write result factors to file
+void writeFactorsToFiles(const string& filename,
+                         const vector<uint32_t>& Ab,
+                         const vector<uint32_t>& Bb,
+                         const uint8_t factorDim)
 {
     using std::stringstream;
     using std::bitset;
@@ -417,6 +415,8 @@ void writeToFiles(const string filename,
     stringstream filename_B;
     filename_B << filename << "_factor_B_" << date.rdbuf() << ".data";
 
+    size_t height = Ab.size();
+
     int nonzeroelements = 0;
     for (int i = 0; i < height; i++){
         bitset<32> row(Ab[i]);
@@ -425,7 +425,7 @@ void writeToFiles(const string filename,
     
     ofstream os_A(filename_A.str());
     if (os_A.good()){
-        os_A << height << " " << (int)factorDim << " " << nonzeroelements << "\n";
+        os_A << height << " " << int(factorDim) << " " << nonzeroelements << "\n";
         for (int i = 0; i < height; i++){
             // bitset<32> row(Ab[i] >> (32 - factorDim));
             // os_A << row << "\n";
@@ -438,6 +438,8 @@ void writeToFiles(const string filename,
         cerr << "File " << filename_A.str() << " could not be openend!" << endl;
     }
     
+    size_t width = Bb.size();
+
     nonzeroelements = 0;
     for (int j = 0; j < width; j++){
         bitset<32> col(Bb[j]);
@@ -446,7 +448,7 @@ void writeToFiles(const string filename,
 
     ofstream os_B(filename_B.str());
     if(os_B.good()){
-        os_B  << width << " " << (int)factorDim << " " << nonzeroelements << "\n";
+        os_B  << width << " " << int(factorDim) << " " << nonzeroelements << "\n";
         for (int j = 0; j < width; j++){
             // bitset<32> col(Bb[j] >> (32 - factorDim));
             // os_B << col << "\n";
@@ -461,5 +463,38 @@ void writeToFiles(const string filename,
     
     cout << "Writing to files \"" << filename_A.rdbuf() << "\" and \"" << filename_B.rdbuf() << "\" complete" << endl;
 }
+
+template<typename distance_t>
+void writeDistancesToFile(const string& filename,
+                          const vector<distance_t>& distances)
+{
+    using std::stringstream;
+    using std::bitset;
+    using std::ofstream;
+
+    time_t now = time(0);
+    // char* dt = ctime(&now);
+    tm *ltm = localtime(&now);
+
+    stringstream date;
+    date << 1+ltm->tm_mon << '-' << ltm->tm_mday << '_' << ltm->tm_hour << ':' << ltm->tm_min << ':' << ltm->tm_sec;
+
+    stringstream filename_d;
+    filename_d << filename << "_distances_" << date.str() << ".txt";
+
+    ofstream os(filename_d.str());
+    if (os.good()){
+        for (int i = 0; i < distances.size(); i++){
+            if(i>0) os << "\n";
+            os << distances[i];
+        }
+        os.close();
+    } else {
+        cerr << "File " << filename_d.str() << " could not be openend!" << endl;
+    }
+
+    cout << "Writing to files \"" << filename_d.rdbuf() << "\" complete" << endl;
+}
+
 
 #endif

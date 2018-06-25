@@ -77,6 +77,8 @@ int main(int argc, char **argv) {
     // Discard first 100000 entries of PRNG
     for (int i = 0; i < 100000; i++)
         fast_kiss32(state);
+
+    config.seed = fast_kiss32(state);
     
     int height, width;
     float density;
@@ -121,9 +123,13 @@ int main(int argc, char **argv) {
 
     // cubin.getFactors(0, A_vec, B_vec);
     cubin.getBestFactors(A_vec, B_vec);
+
+    const auto& distances = cubin.getDistances();
+    writeDistancesToFile(filename, distances);
+
     cubin.clear();
 
-    writeToFiles(filename + "_end", A_vec, B_vec, height, width, config.factorDim);
+    writeFactorsToFiles(filename + "_best", A_vec, B_vec, config.factorDim);
     
     // auto error = computeHammingDistanceCPU(A_vec, B_vec, C0_vec, height, width);
     // std::cout << "cpu error: " << error << std::endl;

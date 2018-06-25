@@ -229,8 +229,9 @@ public:
 
         calculateDistance(handler, stream);
 
-        cout << "Factor initialization complete. "
-             << "Start distance: "
+        #pragma omp critical
+        cout << "\tFactors initialized in slot " << activeId
+             << ". Distance: "
              << "\tabs_err: " << *handler.distance_
              << "\trel_err: " << (float) *handler.distance_ / (height_ * width_)
              << endl;
@@ -275,7 +276,7 @@ public:
         return equal;
     } 
 
-    void getFactors(const size_t activeId, factor_matrix_t& A, factor_matrix_t& B, const cudaStream_t stream = 0) {
+    void getFactors(const size_t activeId, factor_matrix_t& A, factor_matrix_t& B, const cudaStream_t stream = 0) const {
         auto& handler = activeExperiments[activeId];
 
         if(!initialized_ || !handler.initialized_) {
@@ -305,7 +306,7 @@ public:
         // cudaStreamSynchronize(stream); CUERR
     }
 
-    int getDistance(const size_t activeId) {
+    int getDistance(const size_t activeId) const {
         auto& handler = activeExperiments[activeId];
 
         if(!initialized_ || !handler.initialized_) {
@@ -315,7 +316,7 @@ public:
         return *handler.distance_;
     }
 
-    void getBestFactors(factor_matrix_t& A, factor_matrix_t& B, const cudaStream_t stream = 0) {
+    void getBestFactors(factor_matrix_t& A, factor_matrix_t& B, const cudaStream_t stream = 0) const {
         if(!initialized_ || !bestFactors.initialized_) {
             cerr << "Best result not initialized." << endl;
             return;
@@ -340,7 +341,7 @@ public:
         // cudaStreamSynchronize(stream); CUERR
     }
 
-    int getBestDistance() {
+    int getBestDistance() const {
         if(!initialized_ || !bestFactors.initialized_) {
             cerr << "Best result not initialized." << endl;
             return -1;
@@ -367,27 +368,28 @@ public:
     };
 
     void runAllParallel(const size_t numExperiments, const CuBin_config& config) {
+        finalDistances.resize(numExperiments);
         // uint8_t factorDim = 20;
         // uint32_t seed = 123;
 
-        #pragma omp parallel for //schedule(dynamic,1)
+        #pragma omp parallel for schedule(dynamic,1)
         for(size_t i=0; i<numExperiments; ++i) {
             unsigned id = omp_get_thread_num();
-            #pragma omp critical
-            cout << "Starting run " << i << " in slot " << id << endl;
             auto config_i = config;
             config_i.seed += i;
+            #pragma omp critical
+            cout << "Starting run " << i << " in slot " << id << " with seed " << config_i.seed << endl;
             initializeFactors(id, config_i.factorDim, config_i.seed);
-            run(id, config_i);
+            finalDistances[i] = run(id, config_i);
         }
     }
 
-    void run(const size_t activeId, const CuBin_config& config, const cudaStream_t stream = 0) {
+    float run(const size_t activeId, const CuBin_config& config, const cudaStream_t stream = 0) {
         auto& handler = activeExperiments[activeId];
 
         if(!initialized_ || !handler.initialized_) {
             cerr << "CuBin not initialized." << endl;
-            return;
+            return -1;
         }
 
         size_t linesAtOnce = SDIV(config.linesAtOnce, WARPSPERBLOCK) * WARPSPERBLOCK;
@@ -396,7 +398,7 @@ public:
             if (!linesAtOnce) linesAtOnce = max_parallel_lines_;
         }
 
-        if(config.verbosity > 0) {
+        if(config.verbosity > 1) {
             cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n";
             cout << "- - - - Starting " << config.maxIterations
                  << " GPU iterations, changing " << linesAtOnce
@@ -458,7 +460,7 @@ public:
                 distancePrev = *handler.distance_;
             }
 
-            if(config.verbosity > 0 && iteration % config.distanceShowEvery == 0) {
+            if(config.verbosity > 1 && iteration % config.distanceShowEvery == 0) {
                 cout << "Iteration: " << iteration
                      << "\tabs_err: " << *handler.distance_
                      << "\trel_err: " << float(*handler.distance_) / (height_*width_)
@@ -471,6 +473,7 @@ public:
         }
 
         if(config.verbosity > 0) {
+            cout << "\tBreak condition for slot " << activeId << ": ";
             if (!(iteration < config.maxIterations))
                 cout << "Reached iteration limit: " << config.maxIterations << '\n';
             if (!(*handler.distance_ > config.distanceThreshold))
@@ -481,9 +484,9 @@ public:
                 cout << "Stuck for " << stuckIterations << " iterations.\n";
         }
         // cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n";
-        cout << "\tFinal result for slot " << activeId 
+        cout << "\tFinal distance for slot " << activeId
              << "\tabs_err: " << *handler.distance_
-             << "\trel_err: " << (float) *handler.distance_ / (height_ * width_)
+             << "\trel_err: " << float(*handler.distance_) / (height_ * width_)
              << endl;
 
         if(*handler.distance_ < *bestFactors.distance_) {
@@ -516,8 +519,14 @@ public:
                 bestFactors.initialized_ = true;
             }
         }
-        cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -" << endl;
-    }  
+        // cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -" << endl;
+
+        return float(*handler.distance_) / (height_ * width_);
+    }
+
+    const vector<float>& getDistances() const {
+        return finalDistances;
+    }
 
 private:
     bool initialized_ = false;
@@ -533,6 +542,8 @@ private:
 
     factor_handler bestFactors;
     vector<factor_handler> activeExperiments;
+
+    vector<float> finalDistances;
 };
 
 #endif
