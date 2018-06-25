@@ -33,13 +33,15 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    size_t numRuns = args.get<size_t>({"r","runs"}, 1);
+
     my_cubin::CuBin_config config;
     config.verbosity = args.get<size_t>({"v","verbosity"}, config.verbosity);
-    uint8_t factorDim = args.get<uint8_t>({"k","dim","dimension","factordim"}, 20);
+    config.factorDim = args.get<uint8_t>({"d","dim","dimension","factordim"}, 20);
     config.linesAtOnce = args.get<size_t>({"l","lines","linesperkernel"}, config.linesAtOnce);
     config.maxIterations = args.get<size_t>({"i","iter","iterations"}, config.maxIterations);
-    config.distanceThreshold = args.get<int>({"e","d","threshold"}, config.distanceThreshold);
-    config.distanceShowEvery = args.get<size_t>({"s","show","showdistance"}, config.distanceShowEvery);
+    config.distanceThreshold = args.get<int>({"e","threshold"}, config.distanceThreshold);
+    config.distanceShowEvery = args.get<size_t>({"show","showdistance"}, config.distanceShowEvery);
     config.tempStart = args.get<float>({"ts","tempstart","starttemp"}, config.tempStart);
     config.tempEnd = args.get<float>({"te","tempend","endtemp"}, config.tempEnd);
     config.tempFactor = args.get<float>({"tf","factor","tempfactor"}, config.tempFactor);
@@ -52,7 +54,7 @@ int main(int argc, char **argv) {
     config.stuckIterationsBeforeBreak = args.get<size_t>({"stuck"}, config.stuckIterationsBeforeBreak);
 
     cout << "verbosity " << config.verbosity << "\n"
-        << "factorDim " << (int)factorDim << "\n"
+        << "factorDim " << int(config.factorDim) << "\n"
         << "maxIterations " << config.maxIterations << "\n"
         << "linesAtOnce " << config.linesAtOnce << "\n"
         << "distanceThreshold " << config.distanceThreshold << "\n"
@@ -90,7 +92,7 @@ int main(int argc, char **argv) {
         width = 4000;
         // height = 5*1024;
         // width = 5*1024;
-        generate_random_matrix(height, width, factorDim, 4, A0_vec, B0_vec, C0_vec, density);
+        generate_random_matrix(height, width, config.factorDim, 4, A0_vec, B0_vec, C0_vec, density);
     } else {
         cerr << "Wrong data file" << endl;
         return 0;
@@ -98,22 +100,22 @@ int main(int argc, char **argv) {
 
     // Initialize Ab, Bb bitvector matrices
     vector<my_bit_vector_t> A_vec, B_vec;
-    // initializeFactors(A_vec, B_vec, height, width, factorDim, density, state);
+    // initializeFactors(A_vec, B_vec, height, width, config.factorDim, density, state);
 
     // computeHammingDistanceCPU(A_vec, B_vec, C0_vec, height, width);
-    // writeToFiles(filename + "_start", A_vec, B_vec, height, width, factorDim);
+    // writeToFiles(filename + "_start", A_vec, B_vec, height, width, config.factorDim);
 
     // copy matrices to GPU and run optimization
-    // auto cubin = my_cubin(A_vec, B_vec, C0_vec, factorDim, density);
+    // auto cubin = my_cubin(A_vec, B_vec, C0_vec, config.factorDim, density);
     auto cubin = my_cubin(C0_vec, height, width, density, 4);
     // cubin.initializeFactors(A_vec, B_vec);
-    // cubin.initializeFactors(0, factorDim, fast_kiss32(state));
+    // cubin.initializeFactors(0, config.factorDim, fast_kiss32(state));
 
     // auto distance = cubin.getDistance();
     // cubin.verifyDistance();
     TIMERSTART(GPUKERNELLOOP)
     // cubin.run(0, config);
-    cubin.runAllParallel(8, config);
+    cubin.runAllParallel(numRuns, config);
     TIMERSTOP(GPUKERNELLOOP)
     // cubin.verifyDistance();
 
@@ -121,7 +123,7 @@ int main(int argc, char **argv) {
     cubin.getBestFactors(A_vec, B_vec);
     cubin.clear();
 
-    writeToFiles(filename + "_end", A_vec, B_vec, height, width, factorDim);
+    writeToFiles(filename + "_end", A_vec, B_vec, height, width, config.factorDim);
     
     // auto error = computeHammingDistanceCPU(A_vec, B_vec, C0_vec, height, width);
     // std::cout << "cpu error: " << error << std::endl;

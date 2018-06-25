@@ -147,6 +147,21 @@ public:
         }
     }
 
+private:
+    void calculateDistance(const factor_handler& handler, const cudaStream_t stream = 0) {
+        cudaMemsetAsync(handler.d_distance_, 0, sizeof(int), stream);
+        // cudaStreamSynchronize(stream); CUERR
+
+        computeDistanceRowsShared <<< SDIV(height_, WARPSPERBLOCK), WARPSPERBLOCK*32, 0, stream >>>
+                        (handler.d_A, handler.d_B, d_C, height_, width_, width_C_padded_,
+                         handler.factorDim_, inverse_density_, handler.d_distance_);
+        // cudaStreamSynchronize(stream); CUERR
+
+        cudaMemcpyAsync(handler.distance_, handler.d_distance_, sizeof(int), cudaMemcpyDeviceToHost, stream);
+        cudaStreamSynchronize(stream); CUERR
+    }
+
+public:
     // initialize factors as copy of host vectors
     bool initializeFactors(const size_t activeId,
                            const factor_matrix_t& A,
@@ -154,64 +169,51 @@ public:
                            const uint8_t factorDim,
                            const cudaStream_t stream = 0)
     {
-        auto& handler = activeExperiments[activeId];
+        return initializeFactors(activeId, factorDim, [&,this](factor_handler& handler){
+            if( A.size() != height_ * handler.lineSize_ || B.size() != width_ * handler.lineSize_) {
+                cerr << "CuBin initialization: Factor dimension mismatch." << endl;
+                return false;
+            }
 
-        handler.factorDim_ = factorDim;
+            size_t lineBytes = sizeof(factor_t) * handler.lineSize_;
+            size_t lineBytes_padded = sizeof(factor_t) * handler.lineSize_padded_;
 
-        if(std::is_same<factor_t, uint32_t>::value) {
-            handler.lineSize_ = 1;
-        }
-        else if(std::is_same<factor_t, float>::value) {
-            handler.lineSize_ = handler.factorDim_;
-        }
+            cudaMemcpy2DAsync(handler.d_A, lineBytes_padded,
+                         A.data(), lineBytes,
+                         lineBytes,
+                         height_,
+                         cudaMemcpyHostToDevice,
+                         stream);
+            // cudaStreamSynchronize(stream); CUERR
 
-        if( A.size() != height_ * handler.lineSize_ || B.size() != width_ * handler.lineSize_) {
-            cerr << "CuBin initialization: Factor dimension mismatch." << endl;
-            return false;
-        }
-
-        size_t lineBytes = sizeof(factor_t) * handler.lineSize_;
-        size_t lineBytes_padded = sizeof(factor_t) * handler.lineSize_padded_;
-
-        cudaMemcpy2DAsync(handler.d_A, lineBytes_padded,
-                     A.data(), lineBytes,
-                     lineBytes,
-                     height_,
-                     cudaMemcpyHostToDevice,
-                     stream);
-        // cudaStreamSynchronize(stream); CUERR
-
-        cudaMemcpy2DAsync(handler.d_B, lineBytes_padded,
-                     B.data(), lineBytes,
-                     lineBytes,
-                     width_,
-                     cudaMemcpyHostToDevice,
-                     stream);
-        // cudaStreamSynchronize(stream); CUERR
-
-        cudaMemsetAsync(handler.d_distance_, 0, sizeof(int), stream);
-        // cudaStreamSynchronize(stream); CUERR
-
-        computeDistanceRowsShared <<< SDIV(height_, WARPSPERBLOCK), WARPSPERBLOCK*32, 0, stream >>>
-                        (handler.d_A, handler.d_B, d_C, height_, width_, width_C_padded_,
-                         handler.factorDim_, inverse_density_, handler.d_distance_);
-        // cudaStreamSynchronize(stream); CUERR
-
-        cudaMemcpyAsync(handler.distance_, handler.d_distance_, sizeof(int), cudaMemcpyDeviceToHost, stream);
-        cudaStreamSynchronize(stream); CUERR
-
-        cout << "Factor initialization complete." << endl;
-
-        cout << "Start distance: "
-             << "\tabs_err: " << *handler.distance_
-             << "\trel_err: " << (float) *handler.distance_ / (height_ * width_)
-             << endl;
-
-        return handler.initialized_ = true;
+            cudaMemcpy2DAsync(handler.d_B, lineBytes_padded,
+                         B.data(), lineBytes,
+                         lineBytes,
+                         width_,
+                         cudaMemcpyHostToDevice,
+                         stream);
+            // cudaStreamSynchronize(stream); CUERR
+        });
     }
 
     // initialize factors on device according to INITIALIZATIONMODE
     bool initializeFactors(const size_t activeId, const uint8_t factorDim, uint32_t seed, const cudaStream_t stream = 0) {
+        return initializeFactors(activeId, factorDim, [&,this](factor_handler& handler){
+            float threshold = getInitChance(density_, handler.factorDim_);
+
+            initFactor <<< SDIV(height_, WARPSPERBLOCK*32/lineSize_padded_), WARPSPERBLOCK*32, 0, stream >>>
+                        (handler.d_A, height_, handler.factorDim_, seed, threshold);
+            // cudaStreamSynchronize(stream); CUERR
+
+            seed += height_;
+            initFactor <<< SDIV(width_, WARPSPERBLOCK*32/lineSize_padded_), WARPSPERBLOCK*32, 0, stream >>>
+                        (handler.d_B, width_, handler.factorDim_, seed, threshold);
+            // cudaStreamSynchronize(stream); CUERR
+        });
+    }
+
+    template<class Initializer>
+    bool initializeFactors(const size_t activeId, const uint8_t factorDim, Initializer&& initilize, const cudaStream_t stream = 0) {
         auto& handler = activeExperiments[activeId];
 
         handler.factorDim_ = factorDim;
@@ -223,31 +225,12 @@ public:
             handler.lineSize_ = handler.factorDim_;
         }
 
-        float threshold = getInitChance(density_, handler.factorDim_);
-        
-        initFactor <<< SDIV(height_, WARPSPERBLOCK*32/lineSize_padded_), WARPSPERBLOCK*32, 0, stream >>>
-                    (handler.d_A, height_, handler.factorDim_, seed, threshold);
-        // cudaStreamSynchronize(stream); CUERR
+        initilize(handler);
 
-        seed += height_;
-        initFactor <<< SDIV(width_, WARPSPERBLOCK*32/lineSize_padded_), WARPSPERBLOCK*32, 0, stream >>>
-                    (handler.d_B, width_, handler.factorDim_, seed, threshold);
-        // cudaStreamSynchronize(stream); CUERR
+        calculateDistance(handler, stream);
 
-        cudaMemsetAsync(handler.d_distance_, 0, sizeof(int), stream);
-        // cudaStreamSynchronize(stream); CUERR
-
-        computeDistanceRowsShared <<< SDIV(height_, WARPSPERBLOCK), WARPSPERBLOCK*32, 0, stream >>>
-                        (handler.d_A, handler.d_B, d_C, height_, width_, width_C_padded_,
-                         handler.factorDim_, inverse_density_, handler.d_distance_);
-        // cudaStreamSynchronize(stream); CUERR
-
-        cudaMemcpyAsync(handler.distance_, handler.d_distance_, sizeof(int), cudaMemcpyDeviceToHost, stream);
-        cudaStreamSynchronize(stream); CUERR
-
-        cout << "Factor initialization complete." << endl;
-
-        cout << "Start distance: "
+        cout << "Factor initialization complete. "
+             << "Start distance: "
              << "\tabs_err: " << *handler.distance_
              << "\trel_err: " << (float) *handler.distance_ / (height_ * width_)
              << endl;
@@ -295,8 +278,8 @@ public:
     void getFactors(const size_t activeId, factor_matrix_t& A, factor_matrix_t& B, const cudaStream_t stream = 0) {
         auto& handler = activeExperiments[activeId];
 
-        if(!initialized_) {
-            cerr << "CuBin not initialized." << endl;
+        if(!initialized_ || !handler.initialized_) {
+            cerr << "Factors in slot " << activeId << " not initialized." << endl;
             return;
         }
 
@@ -322,9 +305,19 @@ public:
         // cudaStreamSynchronize(stream); CUERR
     }
 
+    int getDistance(const size_t activeId) {
+        auto& handler = activeExperiments[activeId];
+
+        if(!initialized_ || !handler.initialized_) {
+            cerr << "Factors in slot " << activeId << " not initialized." << endl;
+            return -1;
+        }
+        return *handler.distance_;
+    }
+
     void getBestFactors(factor_matrix_t& A, factor_matrix_t& B, const cudaStream_t stream = 0) {
-        if(!initialized_) {
-            cerr << "CuBin not initialized." << endl;
+        if(!initialized_ || !bestFactors.initialized_) {
+            cerr << "Best result not initialized." << endl;
             return;
         }
 
@@ -347,13 +340,13 @@ public:
         // cudaStreamSynchronize(stream); CUERR
     }
 
-    // int getDistance() {
-    //     if(!initialized_) {
-    //         cerr << "CuBin not initialized." << endl;
-    //         return -1;
-    //     }
-    //     return *distance_;
-    // }
+    int getBestDistance() {
+        if(!initialized_ || !bestFactors.initialized_) {
+            cerr << "Best result not initialized." << endl;
+            return -1;
+        }
+        return *bestFactors.distance_;
+    }
 
     struct CuBin_config {
         size_t verbosity = 1;
@@ -370,19 +363,22 @@ public:
         float flipManyChance = 0.1f;
         uint32_t flipManyDepth = 2;
         size_t stuckIterationsBeforeBreak = std::numeric_limits<size_t>::max();
+        uint8_t factorDim = 20;
     };
 
     void runAllParallel(const size_t numExperiments, const CuBin_config& config) {
-        uint8_t factorDim = 20;
-        uint32_t seed = 123;
+        // uint8_t factorDim = 20;
+        // uint32_t seed = 123;
 
         #pragma omp parallel for //schedule(dynamic,1)
         for(size_t i=0; i<numExperiments; ++i) {
             unsigned id = omp_get_thread_num();
             #pragma omp critical
             cout << "Starting run " << i << " in slot " << id << endl;
-            initializeFactors(id, factorDim, seed+id);
-            run(id, config);
+            auto config_i = config;
+            config_i.seed += i;
+            initializeFactors(id, config_i.factorDim, config_i.seed);
+            run(id, config_i);
         }
     }
 
@@ -412,10 +408,9 @@ public:
                      << " multiplied by " << config.tempFactor
                      << " every " << config.tempStep
                      << " steps\n";
-
+                cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -"
+                     << endl;
             }
-            cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -";
-            cout << endl;
         }
 
         fast_kiss_state32_t state = get_initial_fast_kiss_state32(config.seed);
@@ -466,7 +461,7 @@ public:
             if(config.verbosity > 0 && iteration % config.distanceShowEvery == 0) {
                 cout << "Iteration: " << iteration
                      << "\tabs_err: " << *handler.distance_
-                     << "\trel_err: " << (float) *handler.distance_ / (height_*width_)
+                     << "\trel_err: " << float(*handler.distance_) / (height_*width_)
                      << "\ttemp: " << temperature;
                 cout << endl;
             }
@@ -485,8 +480,8 @@ public:
             if (!(stuckIterations < config.stuckIterationsBeforeBreak))
                 cout << "Stuck for " << stuckIterations << " iterations.\n";
         }
-        cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n";
-        cout << "Final result: "
+        // cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n";
+        cout << "\tFinal result for slot " << activeId 
              << "\tabs_err: " << *handler.distance_
              << "\trel_err: " << (float) *handler.distance_ / (height_ * width_)
              << endl;
@@ -495,7 +490,7 @@ public:
 
             #pragma omp critical
             if(*handler.distance_ < *bestFactors.distance_) {
-                cout << "Result is better than previous best. Copying to host." << endl;
+                cout << "\tResult is better than previous best. Copying to host." << endl;
 
                 *bestFactors.distance_ = *handler.distance_;
                 bestFactors.lineSize_ = handler.lineSize_;
@@ -517,6 +512,8 @@ public:
                              width_,
                              cudaMemcpyDeviceToHost,
                              stream);
+
+                bestFactors.initialized_ = true;
             }
         }
         cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -" << endl;
@@ -528,10 +525,10 @@ private:
     bit_vector_t *d_C;
     float density_;
     int inverse_density_;
-    size_t height_ = 0;
-    size_t width_ = 0;
-    size_t width_C_padded_ = 0;
-    size_t lineSize_padded_ = 1;
+    size_t height_;
+    size_t width_;
+    size_t width_C_padded_;
+    size_t lineSize_padded_;
     int max_parallel_lines_;
 
     factor_handler bestFactors;
