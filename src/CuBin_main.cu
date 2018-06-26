@@ -37,7 +37,7 @@ int main(int argc, char **argv) {
 
     my_cubin::CuBin_config config;
     config.verbosity = args.get<size_t>({"v","verbosity"}, config.verbosity);
-    config.factorDim = args.get<uint8_t>({"d","dim","dimension","factordim"}, 20);
+    config.factorDim = args.get<uint8_t>({"d","dim","dimension","factordim"}, config.factorDim);
     config.linesAtOnce = args.get<size_t>({"l","lines","linesperkernel"}, config.linesAtOnce);
     config.maxIterations = args.get<size_t>({"i","iter","iterations"}, config.maxIterations);
     config.distanceThreshold = args.get<int>({"e","threshold"}, config.distanceThreshold);
@@ -50,6 +50,7 @@ int main(int argc, char **argv) {
     config.loadBalance = args.contains({"b","balance","loadbalance"});
     config.flipManyChance = args.get<float>({"fc","chance","flipchance","flipmanychance"}, config.flipManyChance);
     config.flipManyDepth = args.get<uint32_t>({"fd","depth","flipdepth","flipmanydepth"}, config.flipManyDepth);
+    config.weight = args.get<int>({"w","weight"}, config.weight);
 
     config.stuckIterationsBeforeBreak = args.get<size_t>({"stuck"}, config.stuckIterationsBeforeBreak);
 
@@ -67,7 +68,8 @@ int main(int argc, char **argv) {
         << "seed " << config.seed << "\n"
         << "loadBalance " << config.loadBalance << "\n"
         << "flipManyChance " << config.flipManyChance << "\n"
-        << "flipManyDepth " << config.flipManyDepth << endl;
+        << "flipManyDepth " << config.flipManyDepth << "\n"
+        << "weight " << config.weight << endl;
 
     // // uint32_t seed = (unsigned long)time(NULL) % UINT32_MAX;
     // uint32_t seed = 46;

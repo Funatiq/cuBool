@@ -3,6 +3,7 @@
 
 #include <vector>
 #include <iostream>
+#include <sstream>
 #include <limits>
 #include <type_traits>
 #include <omp.h>
@@ -18,6 +19,7 @@
 using std::cout;
 using std::cerr;
 using std::endl;
+using std::ostringstream;
 using std::vector;
 
 template<typename factor_t = uint32_t>
@@ -27,11 +29,14 @@ class CuBin
     using bit_vector_t = uint32_t;
     using bit_matrix_t = vector<bit_vector_t>;
 
+    using index_t = uint32_t;
+    using error_t = int;
+
     struct factor_handler {
         factor_t *d_A;
         factor_t *d_B;
-        int *distance_;
-        int *d_distance_;
+        error_t *distance_;
+        error_t *d_distance_;
         uint8_t factorDim_ = 20;
         size_t lineSize_ = 1;
         bool initialized_ = false;
@@ -39,8 +44,8 @@ class CuBin
 
 public:
     CuBin(const bit_matrix_t& C,
-          const size_t height,
-          const size_t width,
+          const index_t height,
+          const index_t width,
           const float density,
           const size_t numActiveExperriments = 1)
     {
@@ -77,7 +82,7 @@ public:
     }
 
     // allocate memory for matrix, factors and distances, copy matrix to device
-    bool initializeMatrix(const bit_matrix_t& C, const size_t height, const size_t width)
+    bool initializeMatrix(const bit_matrix_t& C, const index_t height, const index_t width)
     {
         if( SDIV(height,32) * width != C.size()) {
             cerr << "CuBin construction: Matrix dimension mismatch." << endl;
@@ -92,20 +97,20 @@ public:
         size_t lineBytes_padded = sizeof(factor_t) * lineSize_padded_;
 
         height_ = height;
-        // size_t height_padded = SDIV(height_, WARPSPERBLOCK) * WARPSPERBLOCK;
+        // index_t height_padded = SDIV(height_, WARPSPERBLOCK) * WARPSPERBLOCK;
         for(auto& e : activeExperiments) {
             cudaMalloc(&e.d_A, lineBytes_padded * height_); CUERR
         }
         cudaMallocHost(&bestFactors.d_A, lineBytes_padded * height_); CUERR
 
         width_ = width;
-        // size_t width_padded = SDIV(width_, WARPSPERBLOCK) * WARPSPERBLOCK;
+        // index_t width_padded = SDIV(width_, WARPSPERBLOCK) * WARPSPERBLOCK;
         for(auto& e : activeExperiments) {
             cudaMalloc(&e.d_B, lineBytes_padded * width_); CUERR
         }
         cudaMallocHost(&bestFactors.d_B, lineBytes_padded * width_); CUERR
         
-        size_t height_C = SDIV(height_, 32);
+        index_t height_C = SDIV(height_, 32);
         width_C_padded_ = SDIV(width_, 32) * 32;
         cudaMalloc(&d_C, sizeof(bit_vector_t) * height_C * width_C_padded_); CUERR
 
@@ -115,13 +120,18 @@ public:
                      height_C,
                      cudaMemcpyHostToDevice); CUERR
 
+        // cudaMemcpyToSymbol(height_c, &height_, sizeof(index_t));
+        // cudaMemcpyToSymbol(width_c, &width_, sizeof(index_t));
+        // cudaMemcpyToSymbol(width_padded_c, &width_C_padded_, sizeof(index_t));
+        // cudaMemcpyToSymbol(inverse_density_c, &inverse_density_, sizeof(int));
+
         for(auto& e : activeExperiments) {
-            cudaMallocHost(&e.distance_, sizeof(int)); CUERR
-            cudaMalloc(&e.d_distance_, sizeof(int)); CUERR
-            cudaMemset(e.d_distance_, 0, sizeof(int)); CUERR
+            cudaMallocHost(&e.distance_, sizeof(error_t)); CUERR
+            cudaMalloc(&e.d_distance_, sizeof(error_t)); CUERR
+            cudaMemset(e.d_distance_, 0, sizeof(error_t)); CUERR
         }
-        cudaMallocHost(&bestFactors.distance_, sizeof(int)); CUERR
-        *bestFactors.distance_ = std::numeric_limits<int>::max();
+        cudaMallocHost(&bestFactors.distance_, sizeof(error_t)); CUERR
+        *bestFactors.distance_ = std::numeric_limits<error_t>::max();
 
         cout << "CuBin initialization complete." << endl;
 
@@ -148,16 +158,16 @@ public:
     }
 
 private:
-    void calculateDistance(const factor_handler& handler, const cudaStream_t stream = 0) {
-        cudaMemsetAsync(handler.d_distance_, 0, sizeof(int), stream);
+    void calculateDistance(const factor_handler& handler, const int weight = 1, const cudaStream_t stream = 0) {
+        cudaMemsetAsync(handler.d_distance_, 0, sizeof(error_t), stream);
         // cudaStreamSynchronize(stream); CUERR
 
         computeDistanceRowsShared <<< SDIV(height_, WARPSPERBLOCK), WARPSPERBLOCK*32, 0, stream >>>
                         (handler.d_A, handler.d_B, d_C, height_, width_, width_C_padded_,
-                         handler.factorDim_, inverse_density_, handler.d_distance_);
+                         handler.factorDim_, weight, handler.d_distance_);
         // cudaStreamSynchronize(stream); CUERR
 
-        cudaMemcpyAsync(handler.distance_, handler.d_distance_, sizeof(int), cudaMemcpyDeviceToHost, stream);
+        cudaMemcpyAsync(handler.distance_, handler.d_distance_, sizeof(error_t), cudaMemcpyDeviceToHost, stream);
         cudaStreamSynchronize(stream); CUERR
     }
 
@@ -227,19 +237,10 @@ public:
 
         initilize(handler);
 
-        calculateDistance(handler, stream);
-
-        #pragma omp critical
-        cout << "\tFactors initialized in slot " << activeId
-             << ". Distance: "
-             << "\tabs_err: " << *handler.distance_
-             << "\trel_err: " << (float) *handler.distance_ / (height_ * width_)
-             << endl;
-
         return handler.initialized_ = true;
     }
 
-    bool verifyDistance(const size_t activeId) {
+    bool verifyDistance(const size_t activeId, const int weight = 1) {
         auto& handler = activeExperiments[activeId];
 
         if(!initialized_) {
@@ -247,20 +248,20 @@ public:
             return false;
         }
 
-        int* distance_proof;
-        int* d_distance_proof;
+        error_t* distance_proof;
+        error_t* d_distance_proof;
 
-        cudaMallocHost(&distance_proof, sizeof(int)); CUERR
-        cudaMalloc(&d_distance_proof, sizeof(int)); CUERR
-        cudaMemset(d_distance_proof, 0, sizeof(int)); CUERR
+        cudaMallocHost(&distance_proof, sizeof(error_t)); CUERR
+        cudaMalloc(&d_distance_proof, sizeof(error_t)); CUERR
+        cudaMemset(d_distance_proof, 0, sizeof(error_t)); CUERR
 
         computeDistanceRowsShared <<< SDIV(height_, WARPSPERBLOCK), WARPSPERBLOCK*32 >>>
                         (handler.d_A, handler.d_B, d_C, height_, width_, width_C_padded_,
-                         handler.factorDim_, inverse_density_, d_distance_proof);
+                         handler.factorDim_, weight, d_distance_proof);
 
         cudaDeviceSynchronize(); CUERR
 
-        cudaMemcpy(distance_proof, d_distance_proof, sizeof(int), cudaMemcpyDeviceToHost); CUERR
+        cudaMemcpy(distance_proof, d_distance_proof, sizeof(error_t), cudaMemcpyDeviceToHost); CUERR
 
         bool equal = *handler.distance_ == *distance_proof;
         if(!equal) {
@@ -306,7 +307,7 @@ public:
         // cudaStreamSynchronize(stream); CUERR
     }
 
-    int getDistance(const size_t activeId) const {
+    error_t getDistance(const size_t activeId) const {
         auto& handler = activeExperiments[activeId];
 
         if(!initialized_ || !handler.initialized_) {
@@ -341,7 +342,7 @@ public:
         // cudaStreamSynchronize(stream); CUERR
     }
 
-    int getBestDistance() const {
+    error_t getBestDistance() const {
         if(!initialized_ || !bestFactors.initialized_) {
             cerr << "Best result not initialized." << endl;
             return -1;
@@ -351,9 +352,9 @@ public:
 
     struct CuBin_config {
         size_t verbosity = 1;
-        size_t linesAtOnce = 0;
+        index_t linesAtOnce = 0;
         size_t maxIterations = 0;
-        int distanceThreshold = 0;
+        error_t distanceThreshold = 0;
         size_t distanceShowEvery = std::numeric_limits<size_t>::max();
         float tempStart = 0.0f;
         float tempEnd = -1.0f;
@@ -365,21 +366,29 @@ public:
         uint32_t flipManyDepth = 2;
         size_t stuckIterationsBeforeBreak = std::numeric_limits<size_t>::max();
         uint8_t factorDim = 20;
+        int weight = 1;
     };
 
     void runAllParallel(const size_t numExperiments, const CuBin_config& config) {
         finalDistances.resize(numExperiments);
+
+        fast_kiss_state32_t state = get_initial_fast_kiss_state32(config.seed);
         // uint8_t factorDim = 20;
         // uint32_t seed = 123;
+
+        // cudaMemcpyToSymbol(flipManyChance_c, &config.flipManyChance, sizeof(float));
+        // cudaMemcpyToSymbol(flipManyDepth_c, &config.flipManyDepth, sizeof(uint32_t));
+        // cudaMemcpyToSymbol(factorDim_c, &config.factorDim, sizeof(uint8_t));
 
         #pragma omp parallel for schedule(dynamic,1)
         for(size_t i=0; i<numExperiments; ++i) {
             unsigned id = omp_get_thread_num();
             auto config_i = config;
-            config_i.seed += i;
+            uint32_t seed = fast_kiss32(state);
+            config_i.seed = fast_kiss32(state);
             #pragma omp critical
             cout << "Starting run " << i << " in slot " << id << " with seed " << config_i.seed << endl;
-            initializeFactors(id, config_i.factorDim, config_i.seed);
+            initializeFactors(id, config_i.factorDim, seed);
             finalDistances[i] = run(id, config_i);
         }
     }
@@ -392,25 +401,36 @@ public:
             return -1;
         }
 
-        size_t linesAtOnce = SDIV(config.linesAtOnce, WARPSPERBLOCK) * WARPSPERBLOCK;
+        ostringstream out;
+
+        calculateDistance(handler, config.weight, stream);
+
+        if(config.verbosity > 0) {
+            out << "\tStart distance for slot " << activeId
+                 << "\tabs_err: " << *handler.distance_
+                 << "\trel_err: " << (float) *handler.distance_ / (height_ * width_)
+                 << '\n';
+        }
+
+        index_t linesAtOnce = SDIV(config.linesAtOnce, WARPSPERBLOCK) * WARPSPERBLOCK;
         if(config.loadBalance) {
             linesAtOnce = linesAtOnce / max_parallel_lines_ * max_parallel_lines_;
             if (!linesAtOnce) linesAtOnce = max_parallel_lines_;
         }
 
         if(config.verbosity > 1) {
-            cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n";
-            cout << "- - - - Starting " << config.maxIterations
+            out << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n";
+            out << "- - - - Starting " << config.maxIterations
                  << " GPU iterations, changing " << linesAtOnce
                  << " lines each time\n";
-            cout << "- - - - Showing error every " << config.distanceShowEvery
+            out << "- - - - Showing error every " << config.distanceShowEvery
                  << " steps\n";
             if(config.tempStart > 0) {
-                cout << "- - - - Start temperature " << config.tempStart
+                out << "- - - - Start temperature " << config.tempStart
                      << " multiplied by " << config.tempFactor
                      << " every " << config.tempStep
                      << " steps\n";
-                cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -"
+                out << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -"
                      << endl;
             }
         }
@@ -428,29 +448,29 @@ public:
                 && stuckIterations < config.stuckIterationsBeforeBreak) {
 
             // Change rows
-            int lineToBeChanged = (fast_kiss32(state) % height_) / WARPSPERBLOCK * WARPSPERBLOCK;
+            index_t lineToBeChanged = (fast_kiss32(state) % height_) / WARPSPERBLOCK * WARPSPERBLOCK;
             uint32_t gpuSeed = fast_kiss32(state) + iteration;
 
-            vectorMatrixMultCompareRowWarpShared 
+            vectorMatrixMultCompareRowWarpShared
                 <<< SDIV(min(linesAtOnce, height_), WARPSPERBLOCK), WARPSPERBLOCK*32, 0, stream >>>
                 (handler.d_A, handler.d_B, d_C, height_, width_, width_C_padded_, handler.factorDim_,
                  lineToBeChanged, handler.d_distance_, gpuSeed, temperature/10,
-                 config.flipManyChance, config.flipManyDepth, inverse_density_);
+                 config.flipManyChance, config.flipManyDepth, config.weight);
             // cudaStreamSynchronize(stream); CUERR
 
             // Change cols
             lineToBeChanged = (fast_kiss32(state) % width_) / WARPSPERBLOCK * WARPSPERBLOCK;
             gpuSeed = fast_kiss32(state) + iteration;
 
-            vectorMatrixMultCompareColWarpShared 
+            vectorMatrixMultCompareColWarpShared
                 <<< SDIV(min(linesAtOnce, width_), WARPSPERBLOCK), WARPSPERBLOCK*32, 0, stream >>>
                 (handler.d_A, handler.d_B, d_C, height_, width_, width_C_padded_, handler.factorDim_,
                  lineToBeChanged, handler.d_distance_, gpuSeed, temperature/10,
-                 config.flipManyChance, config.flipManyDepth, inverse_density_);
-            // cudaStreamSynchronize(stream); CUERR
+                 config.flipManyChance, config.flipManyDepth, config.weight);
+            cudaStreamSynchronize(stream); CUERR
 
             if(iteration % syncStep == 0) {
-                cudaMemcpyAsync(handler.distance_, handler.d_distance_, sizeof(int), cudaMemcpyDeviceToHost, stream);
+                cudaMemcpyAsync(handler.distance_, handler.d_distance_, sizeof(error_t), cudaMemcpyDeviceToHost, stream);
                 cudaStreamSynchronize(stream); CUERR
 
                 if(*handler.distance_ == distancePrev)
@@ -461,11 +481,11 @@ public:
             }
 
             if(config.verbosity > 1 && iteration % config.distanceShowEvery == 0) {
-                cout << "Iteration: " << iteration
+                out << "Iteration: " << iteration
                      << "\tabs_err: " << *handler.distance_
                      << "\trel_err: " << float(*handler.distance_) / (height_*width_)
                      << "\ttemp: " << temperature;
-                cout << endl;
+                out << endl;
             }
             if(iteration % config.tempStep == 0) {
                 temperature *= config.tempFactor;
@@ -473,27 +493,29 @@ public:
         }
 
         if(config.verbosity > 0) {
-            cout << "\tBreak condition for slot " << activeId << ": ";
+            out << "\tBreak condition for slot " << activeId << ": ";
             if (!(iteration < config.maxIterations))
-                cout << "Reached iteration limit: " << config.maxIterations << '\n';
+                out << "Reached iteration limit: " << config.maxIterations << '\n';
             if (!(*handler.distance_ > config.distanceThreshold))
-                cout << "Distance below threshold.\n";
+                out << "Distance below threshold.\n";
             if (!(temperature > config.tempEnd))
-                cout << "Temperature below threshold.\n";
+                out << "Temperature below threshold.\n";
             if (!(stuckIterations < config.stuckIterationsBeforeBreak))
-                cout << "Stuck for " << stuckIterations << " iterations.\n";
+                out << "Stuck for " << stuckIterations << " iterations.\n";
+            // out << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n";
+            out << "\tFinal distance for slot " << activeId
+                 << "\tabs_err: " << *handler.distance_
+                 << "\trel_err: " << float(*handler.distance_) / (height_ * width_)
+                 << endl;
         }
-        // cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n";
-        cout << "\tFinal distance for slot " << activeId
-             << "\tabs_err: " << *handler.distance_
-             << "\trel_err: " << float(*handler.distance_) / (height_ * width_)
-             << endl;
 
         if(*handler.distance_ < *bestFactors.distance_) {
 
             #pragma omp critical
             if(*handler.distance_ < *bestFactors.distance_) {
-                cout << "\tResult is better than previous best. Copying to host." << endl;
+                if(config.verbosity > 0) {
+                    out << "\tResult is better than previous best. Copying to host." << endl;
+                }
 
                 *bestFactors.distance_ = *handler.distance_;
                 bestFactors.lineSize_ = handler.lineSize_;
@@ -521,6 +543,9 @@ public:
         }
         // cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -" << endl;
 
+        #pragma omp critical
+        cout << out.str();
+
         return float(*handler.distance_) / (height_ * width_);
     }
 
@@ -534,9 +559,9 @@ private:
     bit_vector_t *d_C;
     float density_;
     int inverse_density_;
-    size_t height_;
-    size_t width_;
-    size_t width_C_padded_;
+    index_t height_;
+    index_t width_;
+    index_t width_C_padded_;
     size_t lineSize_padded_;
     int max_parallel_lines_;
 

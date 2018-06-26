@@ -80,7 +80,7 @@ bool metro(fast_kiss_state32_t state, const error_t error, const float temperatu
 // error measures ---------------------------------------------------------------
 template<typename error_t>
 __inline__ __device__ __host__
-error_t error_measure0(const int test, const int truth, const error_t weigth) {
+error_t error_measure(const int test, const int truth, const error_t weigth) {
     return (truth == 1) ? weigth * (test ^ truth) : (test ^ truth);
 }
 
@@ -103,18 +103,18 @@ error_t error_measurew(const int test, const int truth, const error_t weigth_0) 
 }
 
 // __inline__ __device__ __host__
-// int error_measure(const int test, const int truth, const int inverse_density = 0) {
+// int error_measure(const int test, const int truth, const int weight = 0) {
 //     return test ^ truth;
 // }
 
 __inline__ __device__ __host__
-int error_measure(const int test, const int truth, const int inverse_density) {
+int error_measure1(const int test, const int truth, const int weight) {
     return (truth == 1) ? 1 * (test ^ truth) : (test ^ truth);
 }
 
 // __inline__ __device__ __host__
-// int error_measure3(const int test, const int truth, const int inverse_density) {
-//     return (truth == 0) ? inverse_density * (test ^ truth) : (test ^ truth);
+// int error_measure3(const int test, const int truth, const int weight) {
+//     return (truth == 0) ? weight * (test ^ truth) : (test ^ truth);
 // }
 
 #endif
