@@ -1,2 +1,4 @@
 data/*.data
+data/*.tsv
+data/*.txt
 results*
