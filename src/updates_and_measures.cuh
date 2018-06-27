@@ -81,6 +81,8 @@ bool metro(fast_kiss_state32_t state, const error_t error, const float temperatu
 template<typename error_t>
 __inline__ __device__ __host__
 error_t error_measure(const int test, const int truth, const error_t weigth) {
+    // const error_t w = (truth == 1) ? weigth : 1;
+    // return w * (test ^ truth);
     return (truth == 1) ? weigth * (test ^ truth) : (test ^ truth);
 }
 

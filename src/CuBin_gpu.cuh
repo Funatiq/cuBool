@@ -380,13 +380,16 @@ public:
         // cudaMemcpyToSymbol(flipManyDepth_c, &config.flipManyDepth, sizeof(uint32_t));
         // cudaMemcpyToSymbol(factorDim_c, &config.factorDim, sizeof(uint8_t));
 
-        #pragma omp parallel for schedule(dynamic,1)
+        #pragma omp parallel for schedule(dynamic,1) shared(state)
         for(size_t i=0; i<numExperiments; ++i) {
             unsigned id = omp_get_thread_num();
             auto config_i = config;
-            uint32_t seed = fast_kiss32(state);
+            uint32_t seed;
+            #pragma omp critical(kiss)
+            seed = fast_kiss32(state);
+            #pragma omp critical(kiss)
             config_i.seed = fast_kiss32(state);
-            #pragma omp critical
+            #pragma omp critical(cout)
             cout << "Starting run " << i << " in slot " << id << " with seed " << config_i.seed << endl;
             initializeFactors(id, config_i.factorDim, seed);
             finalDistances[i] = run(id, config_i);
@@ -493,15 +496,16 @@ public:
         }
 
         if(config.verbosity > 0) {
-            out << "\tBreak condition for slot " << activeId << ": ";
+            out << "\tBreak condition for slot " << activeId << ":\t";
             if (!(iteration < config.maxIterations))
-                out << "Reached iteration limit: " << config.maxIterations << '\n';
+                out << "Reached iteration limit: " << config.maxIterations;
             if (!(*handler.distance_ > config.distanceThreshold))
-                out << "Distance below threshold.\n";
+                out << "Distance below threshold: " << config.distanceThreshold;
             if (!(temperature > config.tempEnd))
-                out << "Temperature below threshold.\n";
+                out << "Temperature below threshold";
             if (!(stuckIterations < config.stuckIterationsBeforeBreak))
-                out << "Stuck for " << stuckIterations << " iterations.\n";
+                out << "Stuck for " << stuckIterations << " iterations";
+            out << " after " << iteration << " iterations.\n";
             // out << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n";
             out << "\tFinal distance for slot " << activeId
                  << "\tabs_err: " << *handler.distance_

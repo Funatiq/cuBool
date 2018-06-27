@@ -111,7 +111,9 @@ int main(int argc, char **argv) {
 
     // copy matrices to GPU and run optimization
     // auto cubin = my_cubin(A_vec, B_vec, C0_vec, config.factorDim, density);
-    auto cubin = my_cubin(C0_vec, height, width, density, 4);
+
+    size_t numSlots = min(size_t(2), numRuns);
+    auto cubin = my_cubin(C0_vec, height, width, density, numSlots);
     // cubin.initializeFactors(A_vec, B_vec);
     // cubin.initializeFactors(0, config.factorDim, fast_kiss32(state));
 
