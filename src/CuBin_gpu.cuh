@@ -59,6 +59,9 @@ public:
 
         max_parallel_lines_ = prop.multiProcessorCount * WARPSPERBLOCK;
 
+        height_ = height;
+        width_ = width;
+
         density_ = density;
         inverse_density_ = 1 / density;
 
@@ -73,45 +76,69 @@ public:
         activeExperiments.resize(numActiveExperriments);
         bestFactors = {};
 
-        initializeMatrix(C, height, width);
+        allocate();
+        cout << "CuBin allocation complete." << endl;
+        cout << "Matrix dimensions:\t" << height_ << "x" << width_ << endl;
+
+        resetBest();
+
+        initializeMatrix(C);
+
+        if(initialized_) {
+            cout << "CuBin initialization complete." << endl;
+        } else {
+            exit(1);
+        }
         cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -" << endl;
     }
 
-    ~CuBin() {
-        clear();
+private:
+    // allocate memory for matrix, factors and distances
+    bool allocate() {
+        size_t lineBytes_padded = sizeof(factor_t) * lineSize_padded_;
+
+        for(auto& e : activeExperiments) {
+            cudaMalloc(&e.d_A, lineBytes_padded * height_); CUERR
+            cudaMalloc(&e.d_B, lineBytes_padded * width_); CUERR
+
+            cudaMallocHost(&e.distance_, sizeof(error_t)); CUERR
+            cudaMalloc(&e.d_distance_, sizeof(error_t)); CUERR
+            // cudaMemset(e.d_distance_, 0, sizeof(error_t)); CUERR
+        }
+
+        cudaMallocHost(&bestFactors.d_A, lineBytes_padded * height_); CUERR
+        cudaMallocHost(&bestFactors.d_B, lineBytes_padded * width_); CUERR
+        cudaMallocHost(&bestFactors.distance_, sizeof(error_t)); CUERR
+        
+        index_t height_C = SDIV(height_, 32);
+        width_C_padded_ = SDIV(width_, 32) * 32;
+        cudaMalloc(&d_C, sizeof(bit_vector_t) * height_C * width_C_padded_); CUERR
+
+        return true;
     }
 
-    // allocate memory for matrix, factors and distances, copy matrix to device
-    bool initializeMatrix(const bit_matrix_t& C, const index_t height, const index_t width)
-    {
-        if( SDIV(height,32) * width != C.size()) {
+public:
+    ~CuBin() {
+        cudaFree(d_C);
+        for(auto& e : activeExperiments) {
+            cudaFree(e.d_A);
+            cudaFree(e.d_B);
+            cudaFreeHost(e.distance_);
+            cudaFree(e.d_distance_);
+        }
+        cudaFreeHost(bestFactors.d_A);
+        cudaFreeHost(bestFactors.d_B);
+        cudaFreeHost(bestFactors.distance_);
+    }
+
+    bool initializeMatrix(const bit_matrix_t& C) {
+        if( SDIV(height_,32) * width_ != C.size()) {
             cerr << "CuBin construction: Matrix dimension mismatch." << endl;
             return false;
         }
 
-        if(initialized_) {
-            cerr << "CuBin already initialized. Please clear CuBin before reinitialization." << endl;
-            return false;
-        }
-
-        size_t lineBytes_padded = sizeof(factor_t) * lineSize_padded_;
-
-        height_ = height;
-        for(auto& e : activeExperiments) {
-            cudaMalloc(&e.d_A, lineBytes_padded * height_); CUERR
-        }
-        cudaMallocHost(&bestFactors.d_A, lineBytes_padded * height_); CUERR
-
-        width_ = width;
-        for(auto& e : activeExperiments) {
-            cudaMalloc(&e.d_B, lineBytes_padded * width_); CUERR
-        }
-        cudaMallocHost(&bestFactors.d_B, lineBytes_padded * width_); CUERR
-        
         index_t height_C = SDIV(height_, 32);
         width_C_padded_ = SDIV(width_, 32) * 32;
-
-        cudaMalloc(&d_C, sizeof(bit_vector_t) * height_C * width_C_padded_); CUERR
 
         cudaMemcpy2D(d_C, sizeof(bit_vector_t) * width_C_padded_,
                      C.data(), sizeof(bit_vector_t) * width_,
@@ -119,36 +146,13 @@ public:
                      height_C,
                      cudaMemcpyHostToDevice); CUERR
 
-        for(auto& e : activeExperiments) {
-            cudaMallocHost(&e.distance_, sizeof(error_t)); CUERR
-            cudaMalloc(&e.d_distance_, sizeof(error_t)); CUERR
-            cudaMemset(e.d_distance_, 0, sizeof(error_t)); CUERR
-        }
-        cudaMallocHost(&bestFactors.distance_, sizeof(error_t)); CUERR
-        *bestFactors.distance_ = std::numeric_limits<error_t>::max();
-
-        cout << "CuBin initialization complete." << endl;
-
-        cout << "Matrix dimensions:\t" << height_ << "x" << width_ << endl;
-
         return initialized_ = true;
     }
 
-    void clear() {
-        if(initialized_) {
-            cudaFree(d_C);
-            for(auto& e : activeExperiments) {
-                cudaFree(e.d_A);
-                cudaFree(e.d_B);
-                cudaFreeHost(e.distance_);
-                cudaFree(e.d_distance_);
-            }
-            cudaFreeHost(bestFactors.d_A);
-            cudaFreeHost(bestFactors.d_B);
-            cudaFreeHost(bestFactors.distance_);
-
-            initialized_ = false;
-        }
+    bool resetBest() {
+        *bestFactors.distance_ = std::numeric_limits<error_t>::max();
+        bestFactors.initialized_ = false;
+        return true;
     }
 
 private:
@@ -166,6 +170,25 @@ private:
     }
 
 public:
+    // initialize factors with custom Initializer function
+    template<class Initializer>
+    bool initializeFactors(const size_t activeId, const uint8_t factorDim, Initializer&& initilize, const cudaStream_t stream = 0) {
+        auto& handler = activeExperiments[activeId];
+
+        handler.factorDim_ = factorDim;
+
+        if(std::is_same<factor_t, uint32_t>::value) {
+            handler.lineSize_ = 1;
+        }
+        else if(std::is_same<factor_t, float>::value) {
+            handler.lineSize_ = handler.factorDim_;
+        }
+
+        initilize(handler);
+
+        return handler.initialized_ = true;
+    }
+
     // initialize factors as copy of host vectors
     bool initializeFactors(const size_t activeId,
                            const factor_matrix_t& A,
@@ -217,29 +240,11 @@ public:
         });
     }
 
-    template<class Initializer>
-    bool initializeFactors(const size_t activeId, const uint8_t factorDim, Initializer&& initilize, const cudaStream_t stream = 0) {
-        auto& handler = activeExperiments[activeId];
-
-        handler.factorDim_ = factorDim;
-
-        if(std::is_same<factor_t, uint32_t>::value) {
-            handler.lineSize_ = 1;
-        }
-        else if(std::is_same<factor_t, float>::value) {
-            handler.lineSize_ = handler.factorDim_;
-        }
-
-        initilize(handler);
-
-        return handler.initialized_ = true;
-    }
-
     bool verifyDistance(const size_t activeId, const int weight = 1) {
         auto& handler = activeExperiments[activeId];
 
         if(!initialized_) {
-            cerr << "CuBin not initialized." << endl;
+            cerr << "CuBin matrix not initialized." << endl;
             return false;
         }
 
@@ -275,7 +280,7 @@ public:
     void getFactors(const size_t activeId, factor_matrix_t& A, factor_matrix_t& B, const cudaStream_t stream = 0) const {
         auto& handler = activeExperiments[activeId];
 
-        if(!initialized_ || !handler.initialized_) {
+        if(!handler.initialized_) {
             cerr << "Factors in slot " << activeId << " not initialized." << endl;
             return;
         }
@@ -305,7 +310,7 @@ public:
     error_t getDistance(const size_t activeId) const {
         auto& handler = activeExperiments[activeId];
 
-        if(!initialized_ || !handler.initialized_) {
+        if(!handler.initialized_) {
             cerr << "Factors in slot " << activeId << " not initialized." << endl;
             return -1;
         }
@@ -313,7 +318,7 @@ public:
     }
 
     void getBestFactors(factor_matrix_t& A, factor_matrix_t& B, const cudaStream_t stream = 0) const {
-        if(!initialized_ || !bestFactors.initialized_) {
+        if(!bestFactors.initialized_) {
             cerr << "Best result not initialized." << endl;
             return;
         }
@@ -338,7 +343,7 @@ public:
     }
 
     error_t getBestDistance() const {
-        if(!initialized_ || !bestFactors.initialized_) {
+        if(!bestFactors.initialized_) {
             cerr << "Best result not initialized." << endl;
             return -1;
         }
@@ -388,8 +393,13 @@ public:
     float run(const size_t activeId, const CuBin_config& config, const cudaStream_t stream = 0) {
         auto& handler = activeExperiments[activeId];
 
-        if(!initialized_ || !handler.initialized_) {
-            cerr << "CuBin not initialized." << endl;
+        if(!initialized_) {
+            cerr << "CuBin matrix not initialized." << endl;
+            return -1;
+        }
+
+        if(!handler.initialized_) {
+            cerr << "CuBin factor in slot " << activeId << " not initialized." << endl;
             return -1;
         }
 
@@ -560,10 +570,12 @@ private:
     bit_vector_t *d_C;
     float density_;
     int inverse_density_;
+
     index_t height_;
     index_t width_;
     index_t width_C_padded_;
     size_t lineSize_padded_;
+
     int max_parallel_lines_;
 
     factor_handler bestFactors;

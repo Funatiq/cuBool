@@ -1,6 +1,7 @@
 #include <vector>
 #include <iostream>
 #include <string>
+#include <algorithm> // min
 // #include <limits>
 
 #include "helper/rngpu.hpp"
@@ -25,7 +26,7 @@ using my_cubin = CuBin<my_bit_vector_t>;
 int main(int argc, char **argv) {
     mc::args_parser args{argc, argv};
 
-    auto filename = string{};
+    string filename;
     if(args.non_prefixed_count() > 0) {
         filename = args.non_prefixed(0);
     } else {
@@ -104,7 +105,7 @@ int main(int argc, char **argv) {
 
     vector<my_bit_vector_t> A_vec, B_vec;
 
-    size_t numSlots = min(size_t(2), numRuns);
+    size_t numSlots = std::min(size_t(2), numRuns);
     auto cubin = my_cubin(C0_vec, height, width, density, numSlots);
 
     TIMERSTART(GPUKERNELLOOP)
@@ -115,8 +116,6 @@ int main(int argc, char **argv) {
 
     const auto& distances = cubin.getDistances();
     writeDistancesToFile(filename, distances);
-
-    cubin.clear();
 
     writeFactorsToFiles(filename + "_best", A_vec, B_vec, config.factorDim);
 
