@@ -55,7 +55,7 @@ void test(typename CuBin<factor_t>::CuBin_config config) {
     // copy matrices to GPU and run optimization
     auto cubin0 = CuBin<factor_t>(A0_vec, B0_vec, C0_vec, factorDim);
     int distance = cubin0.getDistance();
-    cout << "Start distance: " << (float) distance / (height*width)
+    cout << "Start distance: " << float(distance) / height / width
          << " = " << distance << " elements" << endl;
     TIMERSTART(DISTANCE)
     for(int i=0; i<distanceIterations; ++i)
@@ -77,7 +77,7 @@ void test(typename CuBin<factor_t>::CuBin_config config) {
     // copy matrices to GPU and run optimization
     auto cubin = CuBin<factor_t>(A_vec, B_vec, C0_vec, factorDim);
     distance = cubin.getDistance();
-    cout << "Start distance: " << (float) distance / (height*width)
+    cout << "Start distance: " << float(distance) / height / width
          << " = " << distance << " elements" << endl;
     TIMERSTART(DISTANCE2)
     for(int i=0; i<distanceIterations; ++i)

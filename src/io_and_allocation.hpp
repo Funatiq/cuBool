@@ -99,7 +99,7 @@ void generate_random_matrix(const int height, const int width, const uint8_t fac
         }
     }
     
-    density = (float) nonzeroelements / (height * width);
+    density = float(nonzeroelements) / height / width;
        
     printf("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
     printf("MATRIX CREATION COMPLETE\n");
@@ -151,9 +151,9 @@ void generate_random_matrix(const int height, const int width, const uint8_t fac
     // }
 
     // Malloc for C0b
-    int padded_height_32 = SDIV(height, 32);
-    int sizeCb = padded_height_32 * width;
-    // int sizeC = SDIV(height * width, 32);
+    size_t padded_height_32 = SDIV(height, 32);
+    size_t sizeCb = padded_height_32 * width;
+    // size_t sizeC = SDIV(height * width, 32);
 
     C0b.clear();
     C0b.resize(sizeCb, 0);
@@ -178,7 +178,7 @@ void generate_random_matrix(const int height, const int width, const uint8_t fac
         }
     }
     
-    density = (float) nonzeroelements / (height * width);
+    density = float(nonzeroelements) / height / width;
        
     printf("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
     printf("MATRIX CREATION COMPLETE\n");
@@ -221,7 +221,7 @@ void readInputFileData(const string filename,
         nonzeroelements++;
     }
     
-    density = (double) nonzeroelements / (height * width);
+    density = float(nonzeroelements) / height / width;
 
     printf("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
     printf("READING OF .DATA FILE COMPLETE\n");

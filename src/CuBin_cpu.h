@@ -43,14 +43,14 @@ int computeHammingDistanceCPU(const vector<bit_vector_t> &Ab,
 }
 
 struct confusion_matrix {
-    int TP;
-    int TN;
-    int FP;
-    int FN;
+    size_t TP;
+    size_t TN;
+    size_t FP;
+    size_t FN;
 
     confusion_matrix() : TP(0), TN(0), FP(0), FN(0) {};
 
-    confusion_matrix(int tp, int tn, int fp, int fn) : TP(tp), TN(tn), FP(fp), FN(fn) {};
+    confusion_matrix(size_t tp, size_t tn, size_t fp, size_t fn) : TP(tp), TN(tn), FP(fp), FN(fn) {};
 
     float precision() {
         return 1.0f*TP / (TP + FP);
@@ -68,11 +68,11 @@ struct confusion_matrix {
         return 1.0f*TP / (TP + FP + FN);
     }
 
-    int total_error() {
+    size_t total_error() {
         return FP + FN;
     }
 
-    int problem_size() {
+    size_t problem_size() {
         return TP + TN + FP + FN;
     }
 
@@ -88,10 +88,10 @@ confusion_matrix computeErrorsCPU(const vector<bit_vector_t> &Ab,
                         const int height,
                         const int width)
 {
-    int true_positives = 0;
-    int true_negatives = 0;
-    int false_positives = 0;
-    int false_negatives = 0;
+    size_t true_positives = 0;
+    size_t true_negatives = 0;
+    size_t false_positives = 0;
+    size_t false_negatives = 0;
 
     #pragma omp parallel for reduction(+:true_positives) reduction(+:true_negatives) reduction(+:false_positives) reduction(+:false_negatives)
     for(int j=0; j < width; ++j) {
@@ -804,7 +804,7 @@ public:
         distance_ = computeHammingDistanceCPU(A_, B_, C_, height_, width_);
         cout << "Start distance: "
                   << "\tabs_err: " << distance_
-                  << "\trel_err: " << (float) distance_ / (height_ * width_)
+                  << "\trel_err: " << float(distance_) / height_ / width_
                   << endl;
 
         for(int k=0; k<factorDim_; ++k) {
@@ -817,11 +817,11 @@ public:
         cout << "CuBin initialization complete." << endl;
 
         cout << "Matrix dimensions:\t" << height_ << "x" << width_ << endl;
-        cout << "Factor dimension:\t" << (int) factorDim_ << endl;
+        cout << "Factor dimension:\t" << int(factorDim_) << endl;
 
         cout << "Start distance: "
                   << "\tabs_err: " << distance_
-                  << "\trel_err: " << (float) distance_ / (height_ * width_)
+                  << "\trel_err: " << float(distance_) / height_ / width_
                   << endl;
 
         return initialized_ = true;
@@ -999,7 +999,7 @@ public:
                               // << "\tupdate: " << update_sum / config.distanceShowEvery
                               << "\tTP: " << confusion.TP
                               // << "\terrors: " << confusion.total_error()
-                              // << "\trel_err: " << (float) distance_ / (height_*width_)
+                              // << "\trel_err: " << float(distance_) / height_ / width_
                               << "\thamming: " << distance_
                               << "\ttemp: " << temperature;
                     cout << endl;
@@ -1040,7 +1040,7 @@ public:
         cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n";
         cout << "Final result: "
                   << "\tabs_err: " << distance_
-                  << "\trel_err: " << (float) distance_ / (height_ * width_)
+                  << "\trel_err: " << float(distance_) / height_ / width_
                   << endl;
     }  
 
