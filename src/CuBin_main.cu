@@ -102,30 +102,15 @@ int main(int argc, char **argv) {
         return 0;
     }
 
-    // Initialize Ab, Bb bitvector matrices
     vector<my_bit_vector_t> A_vec, B_vec;
-    // initializeFactors(A_vec, B_vec, height, width, config.factorDim, density, state);
-
-    // computeHammingDistanceCPU(A_vec, B_vec, C0_vec, height, width);
-    // writeToFiles(filename + "_start", A_vec, B_vec, height, width, config.factorDim);
-
-    // copy matrices to GPU and run optimization
-    // auto cubin = my_cubin(A_vec, B_vec, C0_vec, config.factorDim, density);
 
     size_t numSlots = min(size_t(2), numRuns);
     auto cubin = my_cubin(C0_vec, height, width, density, numSlots);
-    // cubin.initializeFactors(A_vec, B_vec);
-    // cubin.initializeFactors(0, config.factorDim, fast_kiss32(state));
 
-    // auto distance = cubin.getDistance();
-    // cubin.verifyDistance();
     TIMERSTART(GPUKERNELLOOP)
-    // cubin.run(0, config);
     cubin.runAllParallel(numRuns, config);
     TIMERSTOP(GPUKERNELLOOP)
-    // cubin.verifyDistance();
 
-    // cubin.getFactors(0, A_vec, B_vec);
     cubin.getBestFactors(A_vec, B_vec);
 
     const auto& distances = cubin.getDistances();
@@ -134,12 +119,6 @@ int main(int argc, char **argv) {
     cubin.clear();
 
     writeFactorsToFiles(filename + "_best", A_vec, B_vec, config.factorDim);
-    
-    // auto error = computeHammingDistanceCPU(A_vec, B_vec, C0_vec, height, width);
-    // std::cout << "cpu error: " << error << std::endl;
-
-    // auto C = computeProductCOO(A_vec, B_vec, height, width);
-    // cout << "Nonzeros in product: " << C.size() << endl;
 
     auto confusion = computeErrorsCPU(A_vec, B_vec, C0_vec, height, width);
 
@@ -153,18 +132,10 @@ int main(int argc, char **argv) {
     cout << "recall:   \t" << confusion.sensitivity()*100 << " %\n";
     cout << "F1 score: \t" << confusion.f1score() << endl;
 
-
-{    uint32_t columns = A_vec[0];
-    for(auto& a : A_vec)
-        columns |= a;
-    std::bitset<32> bits(columns);
-    cout << "A uses " << bits.count() << " of " << int(config.factorDim) << " columns" << endl;}
-
-{    uint32_t columns = B_vec[0];
-    for(auto& b : B_vec)
-        columns |= b;
-    std::bitset<32> bits(columns);
-    cout << "B uses " << bits.count() << " of " << int(config.factorDim) << " columns" << endl;}
+    int count = nonzeroDimension(A_vec);
+    cout << "A uses " << count << " of " << int(config.factorDim) << " columns" << endl;
+    count = nonzeroDimension(B_vec);
+    cout << "B uses " << count << " of " << int(config.factorDim) << " columns" << endl;
 
     return 0;
 }

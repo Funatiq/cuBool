@@ -97,14 +97,12 @@ public:
         size_t lineBytes_padded = sizeof(factor_t) * lineSize_padded_;
 
         height_ = height;
-        // index_t height_padded = SDIV(height_, WARPSPERBLOCK) * WARPSPERBLOCK;
         for(auto& e : activeExperiments) {
             cudaMalloc(&e.d_A, lineBytes_padded * height_); CUERR
         }
         cudaMallocHost(&bestFactors.d_A, lineBytes_padded * height_); CUERR
 
         width_ = width;
-        // index_t width_padded = SDIV(width_, WARPSPERBLOCK) * WARPSPERBLOCK;
         for(auto& e : activeExperiments) {
             cudaMalloc(&e.d_B, lineBytes_padded * width_); CUERR
         }
@@ -113,9 +111,6 @@ public:
         index_t height_C = SDIV(height_, 32);
         width_C_padded_ = SDIV(width_, 32) * 32;
 
-        // size_t size_C = sizeof(bit_vector_t) * height_C * width_C_padded_;
-        // cout << "----- size C: " << size_C << endl;
-
         cudaMalloc(&d_C, sizeof(bit_vector_t) * height_C * width_C_padded_); CUERR
 
         cudaMemcpy2D(d_C, sizeof(bit_vector_t) * width_C_padded_,
@@ -123,11 +118,6 @@ public:
                      sizeof(bit_vector_t) * width_,
                      height_C,
                      cudaMemcpyHostToDevice); CUERR
-
-        // cudaMemcpyToSymbol(height_c, &height_, sizeof(index_t));
-        // cudaMemcpyToSymbol(width_c, &width_, sizeof(index_t));
-        // cudaMemcpyToSymbol(width_padded_c, &width_C_padded_, sizeof(index_t));
-        // cudaMemcpyToSymbol(inverse_density_c, &inverse_density_, sizeof(int));
 
         for(auto& e : activeExperiments) {
             cudaMallocHost(&e.distance_, sizeof(error_t)); CUERR
@@ -378,12 +368,6 @@ public:
         finalDistances.resize(numExperiments);
 
         fast_kiss_state32_t state = get_initial_fast_kiss_state32(config.seed);
-        // uint8_t factorDim = 20;
-        // uint32_t seed = 123;
-
-        // cudaMemcpyToSymbol(flipManyChance_c, &config.flipManyChance, sizeof(float));
-        // cudaMemcpyToSymbol(flipManyDepth_c, &config.flipManyDepth, sizeof(uint32_t));
-        // cudaMemcpyToSymbol(factorDim_c, &config.factorDim, sizeof(uint8_t));
 
         #pragma omp parallel for schedule(dynamic,1) shared(state)
         for(size_t i=0; i<numExperiments; ++i) {
