@@ -98,7 +98,7 @@ int main(int argc, char **argv) {
         // width = 5*1024;
         generate_random_matrix(height, width, config.factorDim, 4, A0_vec, B0_vec, C0_vec, density);
     } else {
-        cerr << "Wrong data file" << endl;
+        cerr << "Bad input file" << endl;
         return 0;
     }
 
@@ -148,9 +148,24 @@ int main(int argc, char **argv) {
     cout << "false_positives:\t" << confusion.FP << '\t';
     cout << "false_negatives:\t" << confusion.FN << '\n';
     cout << "total error:\t" << confusion.total_error() << '\t';
-    cout << "rel error:\t" << confusion.rel_error() << endl;
-    cout << "precision:\t" << confusion.precision() << endl;
-    cout << "recall:   \t" << confusion.sensitivity() << endl;
+    cout << "rel error:\t" << confusion.rel_error() << '\n';
+    cout << "precision:\t" << confusion.precision()*100 << " %\n";
+    cout << "recall:   \t" << confusion.sensitivity()*100 << " %\n";
+    cout << "F1 score: \t" << confusion.f1score() << endl;
+
+
+{    uint32_t columns = A_vec[0];
+    for(auto& a : A_vec)
+        columns |= a;
+    std::bitset<32> bits(columns);
+    cout << "A uses " << bits.count() << " of " << int(config.factorDim) << " columns" << endl;}
+
+{    uint32_t columns = B_vec[0];
+    for(auto& b : B_vec)
+        columns |= b;
+    std::bitset<32> bits(columns);
+    cout << "B uses " << bits.count() << " of " << int(config.factorDim) << " columns" << endl;}
+
     return 0;
 }
 
