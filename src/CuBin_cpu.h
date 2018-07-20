@@ -5,6 +5,7 @@
 #include <iostream>
 #include <limits>
 #include <cmath>
+#include <bitset>
 
 #include "helper/rngpu.hpp"
 
@@ -40,6 +41,15 @@ int computeHammingDistanceCPU(const vector<bit_vector_t> &Ab,
     }
 
     return error;
+}
+
+template<typename bit_vector_t>
+int nonzeroDimension(vector<bit_vector_t>& Ab){
+    bit_vector_t columns = 0;
+    for(auto& a : Ab)
+        columns |= a;
+    std::bitset<std::numeric_limits<bit_vector_t>::digits> bits(columns);
+    return bits.count();
 }
 
 struct confusion_matrix {
@@ -335,19 +345,7 @@ void updateWholeColumn(vector<bit_vector_t> &Ab,
                                     const float density,
                                     const uint32_t seed)
 {
-    #pragma omp for
-    for (int i = 0; i < size_A; ++i) {
-        fast_kiss_state32_t state;
-        state = get_initial_fast_kiss_state32(seed + i);
-
-        bool set_one = (fast_kiss32(state) / double(UINT32_MAX)) 
-                       < (sqrt(1 - pow(1 - density, 1 / double(factorDim))));
-
-        if (set_one)
-            Ab[i] |= 1 << k;
-        else //set 0
-            Ab[i] &= ~(1 << k);
-    }
+    updateColumnPart(Ab, size_A, factorDim, k, density, 0, size_A, seed);
 }
 
 template<typename bit_vector_t>
@@ -360,6 +358,8 @@ void updateColumnPart(vector<bit_vector_t> &Ab,
                                    const int numlines,
                                    const uint32_t seed)
 {
+    const double threshold = (sqrt(1 - pow(1 - density, 1 / double(factorDim))));
+
     #pragma omp for
     for (int id = 0; id < numlines; ++id) {
         const int i = (startline + id) % size_A;
@@ -367,8 +367,7 @@ void updateColumnPart(vector<bit_vector_t> &Ab,
         fast_kiss_state32_t state;
         state = get_initial_fast_kiss_state32(seed + i);
 
-        bool set_one = (fast_kiss32(state) / double(UINT32_MAX))
-                       < (sqrt(1 - pow(1 - density, 1 / double(factorDim))));
+        const bool set_one = fast_kiss32(state) < threshold * UINT32_MAX;
 
         if (set_one)
             Ab[i] |= 1 << k;
