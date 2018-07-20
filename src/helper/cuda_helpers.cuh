@@ -67,15 +67,18 @@
 
 #define FULLMASK 0xffffffff
 
+
+template<typename T>
 __inline__ __device__
-int warpReduceSum(int val, const unsigned width = warpSize) {
+T warpReduceSum(T val, const unsigned width = warpSize) {
     for (int offset = width / 2; offset > 0; offset /= 2)
         val += __shfl_down_sync(FULLMASK, val, offset);
     return val;
 }
 
+template<typename T>
 __inline__ __device__
-int blockReduceSum(int val, int* reductionArray) {
+T blockReduceSum(T val, T* reductionArray) {
     const int lane = threadIdx.x % warpSize;
     const int wid = threadIdx.x / warpSize;
     val = warpReduceSum(val);
