@@ -9,8 +9,12 @@
 
 #include "config.h"
 #include "io_and_allocation.hpp"
-#include "cuBool_gpu.cuh"
+#include "bit_vector_functions.h"
+#ifdef USE_CPU
 #include "cuBool_cpu.h"
+#else
+#include "cuBool_gpu.cuh"
+#endif
 
 using std::cout;
 using std::cerr;
@@ -19,9 +23,7 @@ using std::string;
 using std::vector;
 
 using my_bit_vector_t = uint32_t; // only tested uint32_t
-
 using my_cuBool = cuBool<my_bit_vector_t>;
-// using my_cuBool = cuBool_CPU<my_bit_vector_t>;
 
 int main(int argc, char **argv) {
     mc::args_parser args{argc, argv};
@@ -109,7 +111,7 @@ int main(int argc, char **argv) {
     auto cuBool = my_cuBool(C0_vec, height, width, density, numSlots);
 
     TIMERSTART(GPUKERNELLOOP)
-    cuBool.runAllParallel(numRuns, config);
+    cuBool.runMultiple(numRuns, config);
     TIMERSTOP(GPUKERNELLOOP)
 
     cuBool.getBestFactors(A_vec, B_vec);

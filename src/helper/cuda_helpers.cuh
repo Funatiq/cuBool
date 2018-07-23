@@ -4,6 +4,8 @@
 #include <iostream>
 #include <cstdint>
 
+#include "../config.h"
+
 #ifndef __CUDACC__
     #include <chrono>
 #endif
@@ -48,48 +50,57 @@
     }
 
     // transfer constants
-    #define H2D (cudaMemcpyHostToDevice)
-    #define D2H (cudaMemcpyDeviceToHost)
-    #define H2H (cudaMemcpyHostToHost)
-    #define D2D (cudaMemcpyDeviceToDevice)
+    // #define H2D (cudaMemcpyHostToDevice)
+    // #define D2H (cudaMemcpyDeviceToHost)
+    // #define H2H (cudaMemcpyHostToHost)
+    // #define D2D (cudaMemcpyDeviceToDevice)
+#endif
+
+#ifdef __CUDACC__
+    #define HOST_DEVICE_QUALIFIER __host__ __device__
+    // #define DEVICE_QUALIFIER __device__
+#else
+    #define HOST_DEVICE_QUALIFIER 
+    // #define DEVICE_QUALIFIER
 #endif
 
 // safe division
 #ifndef SDIV
-#define SDIV(x,y)(((x)+(y)-1)/(y))
+    #define SDIV(x,y)(((x)+(y)-1)/(y))
 #endif
 
 // floor to next multiple of y
 #ifndef FLOOR
-#define FLOOR(x,y)(((x)/(y)*(y))
+    #define FLOOR(x,y)(((x)/(y)*(y))
 #endif
-
 
 #define FULLMASK 0xffffffff
 
-
-template<typename T>
-__inline__ __device__
-T warpReduceSum(T val, const unsigned width = warpSize) {
-    for (int offset = width / 2; offset > 0; offset /= 2)
-        val += __shfl_down_sync(FULLMASK, val, offset);
-    return val;
-}
-
-template<typename T>
-__inline__ __device__
-T blockReduceSum(T val, T* reductionArray) {
-    const int lane = threadIdx.x % warpSize;
-    const int wid = threadIdx.x / warpSize;
-    val = warpReduceSum(val);
-    if (lane == 0) reductionArray[wid] = val;
-    __syncthreads();
-    if (wid == 0) {
-        // val = (threadIdx.x < blockDim.x / warpSize) ? reductionArray[lane] : 0;
-        val = (threadIdx.x < WARPSPERBLOCK) ? reductionArray[lane] : 0;
-        val = warpReduceSum(val, WARPSPERBLOCK);
+#ifdef __CUDACC__
+    template<typename T>
+    __inline__ __device__
+    T warpReduceSum(T val, const unsigned width = warpSize) {
+        for (int offset = width / 2; offset > 0; offset /= 2)
+            val += __shfl_down_sync(FULLMASK, val, offset);
+        return val;
     }
-    return val;
-}
+
+    template<typename T>
+    __inline__ __device__
+    T blockReduceSum(T val, T* reductionArray) {
+        const int lane = threadIdx.x % warpSize;
+        const int wid = threadIdx.x / warpSize;
+        val = warpReduceSum(val);
+        if (lane == 0) reductionArray[wid] = val;
+        __syncthreads();
+        if (wid == 0) {
+            // val = (threadIdx.x < blockDim.x / warpSize) ? reductionArray[lane] : 0;
+            val = (threadIdx.x < WARPSPERBLOCK) ? reductionArray[lane] : 0;
+            val = warpReduceSum(val, WARPSPERBLOCK);
+        }
+        return val;
+    }
+#endif
+
 
 #endif

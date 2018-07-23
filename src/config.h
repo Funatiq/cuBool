@@ -10,9 +10,9 @@
 // #ifndef DIM_PARAM
 // #define DIM_PARAM 20
 // #endif
-#ifndef CPUITERATIONS
-#define CPUITERATIONS 100000000
-#endif
+// #ifndef CPUITERATIONS
+// #define CPUITERATIONS 100000000
+// #endif
 #ifndef INITIALIZATIONMODE
 #define INITIALIZATIONMODE 1
 #endif

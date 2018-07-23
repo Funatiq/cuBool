@@ -12,6 +12,7 @@
 #include <numeric>
 #include <random>
 #include <cmath> // log2
+#include <omp.h>
 
 #include "config.h"
 #include "helper/rngpu.hpp"
@@ -233,6 +234,41 @@ void readInputFileData(const string filename,
 // https://stackoverflow.com/questions/874134/find-if-string-ends-with-another-string-in-c
 bool endsWith(const string& s, const string& suffix) {
     return s.rfind(suffix) == (s.size()-suffix.size());
+}
+
+// Initialization of a factor
+void initFactor(vector<uint32_t> &Ab, 
+                        const int height,
+                        const uint8_t factorDim,
+                        const uint32_t seed, 
+                        const float threshold)
+{
+    Ab.clear();
+    Ab.resize(height, 0);
+
+    const int rand_depth = -log2(threshold)+1;
+
+    // cout << "Init threshold: " << threshold << endl;
+    // cout << "Init rand depth: " << rand_depth << " -> " << pow(2, -rand_depth) << endl;
+
+    if(rand_depth < 16) {
+        const uint32_t factorMask = UINT32_MAX >> (32-factorDim);
+
+        // int counter = 0;
+        #pragma omp parallel //reduce(+:counter)
+        {
+            fast_kiss_state32_t state = get_initial_fast_kiss_state32(seed + omp_get_thread_num());
+            #pragma omp for
+            for (int i = 0; i < height; i++) {
+                Ab[i] = factorMask;
+                for(int d = 0; d < rand_depth; ++d) {
+                    Ab[i] &= fast_kiss32(state);
+                }
+                // if(Ab[i]) ++counter;
+            }
+        }
+        // cout << "nonzero rows in factor: " << counter << endl;
+    }
 }
 
 // Initialization of A and B

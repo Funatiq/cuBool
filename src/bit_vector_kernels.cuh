@@ -13,12 +13,13 @@ void initFactor(bit_vector_t * Ab,
     const index_t tid = threadIdx.x + blockIdx.x * blockDim.x;
 
     if(tid < height) {
-        fast_kiss_state32_t state = get_initial_fast_kiss_state32(seed + tid);
+        bit_vector_t Ai = 0;
 
         const int randDepth = -log2f(threshold)+1;
-        bit_vector_t Ai = 0;
         // if threshold very small simply initilize as 0s (also catch threshold=0)
         if(randDepth < 16) {
+            fast_kiss_state32_t state = get_initial_fast_kiss_state32(seed + tid);
+
             Ai = ~bit_vector_t(0) >> (32-factorDim);
             for(int d=0; d<randDepth; ++d)
                 Ai &= fast_kiss32(state);

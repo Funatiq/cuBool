@@ -17,10 +17,10 @@ using std::vector;
 using std::cout;
 using std::cerr;
 using std::endl;
-
+using std::min;
 
 template<typename factor_t = uint32_t>
-class cuBool_CPU
+class cuBool
 {
     using factor_matrix_t = vector<factor_t>;
     using bit_vector_t = uint32_t;
@@ -39,10 +39,11 @@ class cuBool_CPU
     };
 
 public:
-    cuBool_CPU(const bit_matrix_t& C,
+    cuBool(const bit_matrix_t& C,
           const index_t height,
           const index_t width,
-          const float density)
+          const float density,
+          const size_t numActiveExperriments = 1)
     {
         cout << "~~~ CPU cuBool ~~~" << endl; 
 
@@ -73,7 +74,7 @@ public:
         cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -" << endl;
     }
 
-    ~cuBool_CPU() {}
+    ~cuBool() {}
 
     bool resetBest() {
         bestFactors.distance_ = std::numeric_limits<error_t>::max();
@@ -91,88 +92,116 @@ public:
 
         C_ = C;
 
-        return initialized_ = true;
-    }
-
-public:
-    bool initializeFactors(const factor_matrix_t& A, const factor_matrix_t& B, const uint8_t factorDim) {
-        activeFactors.factorDim_ = factorDim;
-
-        if (std::is_same<factor_t, uint32_t>::value) {
-            activeFactors.lineSize_ = 1;
-        }
-        if(std::is_same<factor_t, float>::value) {
-            activeFactors.lineSize_ = activeFactors.factorDim_;
-        }
-
-        // if( SDIV(A.size()/lineSize_,32) * B.size()/lineSize_ != C_.size()) {
-        if( A.size() != height_ * activeFactors.lineSize_ || B.size() != width_ * activeFactors.lineSize_) {
-            cerr << "cuBool construction: Factor dimension mismatch." << endl;
-            return false;
-        }
-        
-        activeFactors.A_ = A;
-        activeFactors.B_ = B;
-
-        weights_rows_ = computeInverseDensitiesRows(C_, height_, width_);
-        weights_cols_ = computeInverseDensitiesCols(C_, height_, width_);
+        // weights_rows_ = computeInverseDensitiesRows(C_, height_, width_);
+        // weights_cols_ = computeInverseDensitiesCols(C_, height_, width_);
 
         // weights_rows_ = computeDensitiesRows(C_, height_, width_);
         // weights_cols_ = computeDensitiesCols(C_, height_, width_);
 
-        my_error_t max = 0;
-        my_error_t min = std::numeric_limits<float>::max();
-        for (const auto& w : weights_rows_) {
-            // cout << w << " ";
-            if(w > max) max = w;
-            if(w < min) min = w;
-        }
+        // my_error_t max = 0;
+        // my_error_t min = std::numeric_limits<float>::max();
+        // for (const auto& w : weights_rows_) {
+        //     // cout << w << " ";
+        //     if(w > max) max = w;
+        //     if(w < min) min = w;
+        // }
         // cout << endl;
-        cout << "rows weight min: " << min << " weight max: " << max << endl;
+        // cout << "rows weight min: " << min << " weight max: " << max << endl;
 
-        max = 0;
-        min = std::numeric_limits<float>::max();
-        for (const auto& w : weights_cols_) {
-            // cout << w << " ";
-            if(w > max) max = w;
-            if(w < min) min = w;
-        }
-        // cout << endl;
-        cout << "cols weight min: " << min << " weight max: " << max << endl;
-
-        activeFactors.activeFactors.B_ = factor_matrix_t(height_, 0);
-        for(int k=0; k<activeFactors.factorDim_; ++k) {
-            // updateWholeColumn(activeFactors.A_, height_, activeFactors.factorDim_, k, density_, seed);
-            optimizeWholeColumn<true>(activeFactors.B_, width_, activeFactors.A_, height_, C_, activeFactors.factorDim_, k);
-        }
-        activeFactors.distance_ = computeHammingDistanceCPU(activeFactors.A_, activeFactors.B_, C_, height_, width_);
-        cout << "Start distance: "
-                  << "\tabs_err: " << activeFactors.distance_
-                  << "\trel_err: " << float(activeFactors.distance_) / height_ / width_
-                  << endl;
-
-        for(int k=0; k<activeFactors.factorDim_; ++k) {
-            // updateWholeColumn(activeFactors.A_, height_, activeFactors.factorDim_, k, density_, seed);
-            optimizeWholeColumn<true>(activeFactors.B_, width_, activeFactors.A_, height_, C_, activeFactors.factorDim_, k);
-        }
-        activeFactors.distance_ = computeHammingDistanceCPU(activeFactors.A_, activeFactors.B_, C_, height_, width_);
-        // activeFactors.distance_ = computeDistanceCPU(activeFactors.A_, activeFactors.B_, C_, height_, width_, weights_rows_, weights_cols_);
-
-        cout << "cuBool initialization complete." << endl;
-
-        cout << "Matrix dimensions:\t" << height_ << "x" << width_ << endl;
-        cout << "Factor dimension:\t" << int(activeFactors.factorDim_) << endl;
-
-        cout << "Start distance: "
-                  << "\tabs_err: " << activeFactors.distance_
-                  << "\trel_err: " << float(activeFactors.distance_) / height_ / width_
-                  << endl;
+        // max = 0;
+        // min = std::numeric_limits<float>::max();
+        // for (const auto& w : weights_cols_) {
+        //     // cout << w << " ";
+        //     if(w > max) max = w;
+        //     if(w < min) min = w;
+        // }
+        // // cout << endl;
+        // cout << "cols weight min: " << min << " weight max: " << max << endl;
 
         return initialized_ = true;
     }
 
+public:
+    // initialize factors with custom Initializer function
+    template<class Initializer>
+    bool initializeFactors(const uint8_t factorDim, Initializer&& initilize) {
+        auto& handler = activeFactors;
+
+        handler.factorDim_ = factorDim;
+
+        if(std::is_same<factor_t, uint32_t>::value) {
+            handler.lineSize_ = 1;
+        }
+        else if(std::is_same<factor_t, float>::value) {
+            handler.lineSize_ = handler.factorDim_;
+        }
+
+        initilize(handler);
+
+        handler.distance_ = -1;
+
+        return handler.initialized_ = true;
+    }
+
+    // initialize factors as copy of vectors
+    bool initializeFactors(const factor_matrix_t& A, const factor_matrix_t& B, const uint8_t factorDim) {
+        return initializeFactors(factorDim, [&,this](factor_handler& handler){
+            if( A.size() != height_ * handler.lineSize_ || B.size() != width_ * handler.lineSize_) {
+                cerr << "cuBool initialization: Factor dimension mismatch." << endl;
+                return false;
+            }
+
+            activeFactors.A_ = A;
+            activeFactors.B_ = B;
+        
+        });
+    }
+
+    // initialize factors on device according to INITIALIZATIONMODE
+    bool initializeFactors(const uint8_t factorDim, uint32_t seed) {
+        return initializeFactors(factorDim, [&,this](factor_handler& handler){
+            float threshold = getInitChance(density_, handler.factorDim_);
+            // float threshold = 1.0f;
+            initFactor(activeFactors.A_, height_, activeFactors.factorDim_, seed, threshold);
+            seed += height_;
+            initFactor(activeFactors.B_, width_, activeFactors.factorDim_, seed, threshold);
+        });
+    }
+
+    // initialize first factor with random base vectors and optimize other factor
+    bool initializeFactorsRandomBase(const uint8_t factorDim, uint32_t seed) {
+        return initializeFactors(factorDim, [&,this](factor_handler& handler){
+            float threshold = getInitChance(density_, handler.factorDim_);
+            initFactor(activeFactors.A_, height_, activeFactors.factorDim_, seed, threshold);
+            
+            // activeFactors.A_ = factor_matrix_t(height_, 0);
+            activeFactors.B_ = factor_matrix_t(width_, 0);
+            // #pragma omp parallel
+            for(int k=0; k<activeFactors.factorDim_; ++k) {
+                // updateWholeColumn(activeFactors.A_, height_, activeFactors.factorDim_, k, density_, seed);
+                optimizeWholeColumn<true>(activeFactors.B_, width_, activeFactors.A_, height_, C_, activeFactors.factorDim_, k);
+            }
+            activeFactors.distance_ = computeHammingDistanceCPU(activeFactors.A_, activeFactors.B_, C_, height_, width_);
+            cout << "Start distance: "
+                      << "\tabs_err: " << activeFactors.distance_
+                      << "\trel_err: " << float(activeFactors.distance_) / height_ / width_
+                      << endl;
+
+            // #pragma omp parallel
+            for(int k=0; k<activeFactors.factorDim_; ++k) {
+                // updateWholeColumn(activeFactors.A_, height_, activeFactors.factorDim_, k, density_, seed);
+                optimizeWholeColumn<true>(activeFactors.B_, width_, activeFactors.A_, height_, C_, activeFactors.factorDim_, k);
+            }
+            activeFactors.distance_ = computeHammingDistanceCPU(activeFactors.A_, activeFactors.B_, C_, height_, width_);
+            cout << "Start distance: "
+                      << "\tabs_err: " << activeFactors.distance_
+                      << "\trel_err: " << float(activeFactors.distance_) / height_ / width_
+                      << endl;
+        });
+    }
+
     bool verifyDistance() {
-        if(!initialized_) {
+        if(!initialized_ && activeFactors.initialized_) {
             cerr << "cuBool not initialized." << endl;
             return false;
         }
@@ -191,8 +220,8 @@ public:
         return equal;
     } 
 
-    void getFactors(factor_matrix_t& A, factor_matrix_t& B) {
-        if(!initialized_) {
+    void getFactors(factor_matrix_t& A, factor_matrix_t& B) const {
+        if(!activeFactors.initialized_) {
             cerr << "cuBool not initialized." << endl;
             return;
         }
@@ -201,19 +230,37 @@ public:
         B = activeFactors.B_;
     }
 
-    my_error_t getDistance() {
-        if(!initialized_) {
+    my_error_t getDistance() const {
+        if(!activeFactors.initialized_) {
             cerr << "cuBool not initialized." << endl;
             return -1;
         }
         return activeFactors.distance_;
     }
 
+    void getBestFactors(factor_matrix_t& A, factor_matrix_t& B) const {
+        if(!bestFactors.initialized_) {
+            cerr << "cuBool not initialized." << endl;
+            return;
+        }
+
+        A = bestFactors.A_;
+        B = bestFactors.B_;
+    }
+
+    my_error_t getBestDistance() const {
+        if(!bestFactors.initialized_) {
+            cerr << "cuBool not initialized." << endl;
+            return -1;
+        }
+        return bestFactors.distance_;
+    }
+
     struct cuBool_config {
         size_t verbosity = 1;
-        size_t linesAtOnce = 0;
+        index_t linesAtOnce = 0;
         size_t maxIterations = 0;
-        int distanceThreshold = 0;
+        error_t distanceThreshold = std::numeric_limits<error_t>::min();
         size_t distanceShowEvery = std::numeric_limits<size_t>::max();
         float tempStart = 0.0f;
         float tempEnd = -1.0f;
@@ -224,15 +271,33 @@ public:
         float flipManyChance = 0.1f;
         uint32_t flipManyDepth = 2;
         size_t stuckIterationsBeforeBreak = std::numeric_limits<size_t>::max();
+        uint8_t factorDim = 20;
+        int weight = 1;
     };
 
-    void run(const cuBool_config& config) {
+    void runMultiple(const size_t numExperiments, const cuBool_config& config) {
+        finalDistances.resize(numExperiments);
+
+        fast_kiss_state32_t state = get_initial_fast_kiss_state32(config.seed);
+
+        for(size_t i=0; i<numExperiments; ++i) {
+            auto config_i = config;
+            uint32_t seed;
+            seed = fast_kiss32(state);
+            config_i.seed = fast_kiss32(state);
+            cout << "Starting run " << i << " with seed " << config_i.seed << endl;
+            initializeFactors(config_i.factorDim, seed);
+            finalDistances[i] = run(config_i);
+        }
+    }
+
+    float run(const cuBool_config& config) {
         if(!initialized_) {
             cerr << "cuBool not initialized." << endl;
-            return;
+            return -1;
         }
 
-        size_t linesAtOnce = config.linesAtOnce;
+        index_t linesAtOnce = config.linesAtOnce;
 
         if(config.verbosity > 0) {
             cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n";
@@ -260,7 +325,7 @@ public:
         auto distancePrev = activeFactors.distance_;
         // my_error_t tempStep_distance = 1;
         // my_error_t update_sum = 0;
-        int lineToBeChanged;
+        index_t lineToBeChanged;
         uint32_t cpuSeed;
         // int all_true_positives = computeTruePositiveCPU(activeFactors.A_, activeFactors.B_, C_, height_, width_);
         // int all_true_positives = computeTruePositiveCPU(activeFactors.A_, activeFactors.B_, C_, height_, width_);
@@ -376,7 +441,13 @@ public:
                   << "\tabs_err: " << activeFactors.distance_
                   << "\trel_err: " << float(activeFactors.distance_) / height_ / width_
                   << endl;
+
+        return float(activeFactors.distance_) / height_ / width_;
     }  
+
+    const vector<float>& getDistances() const {
+        return finalDistances;
+    }
 
 private:
     bool initialized_ = false;
@@ -387,8 +458,8 @@ private:
     float density_;
     int inverse_density_;
 
-    size_t height_ = 0;
-    size_t width_ = 0;
+    index_t height_ = 0;
+    index_t width_ = 0;
     size_t lineSize_padded_ = 1;
 
     factor_handler bestFactors;

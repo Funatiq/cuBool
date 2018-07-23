@@ -21,14 +21,12 @@ all: cuBool
 cuBool: src/cuBool_main.cu $(HEADERS)
 	$(NVCC) src/cuBool_main.cu $(NVCC_FLAGS) -o cuBool
 
-# cpu: src/cuBool_main.cu $(HEADERS)
-# 	$(CC) src/cuBool_main.cu $(FLAGS) -o cuBool
+cuBool_cpu: src/cuBool_main.cu $(HEADERS)
+	$(CXX) -x c++ src/cuBool_main.cu $(FLAGS) -o cuBool_cpu -DUSE_CPU
 
 debug: NVCC_FLAGS += $(DEBUG)
 debug: cuBool
 
 clean:
-	rm -f cuBool test_distance
+	rm -f cuBool cuBool_cpu
 
-test_distance: source_tests/test_cuBool_distance.cu $(HEADERS)
-	$(NVCC) source_tests/test_cuBool_distance.cu $(NVCC_FLAGS) -o test_distance

@@ -7,6 +7,7 @@
 #include "helper/confusion.h"
 
 #include "config.h"
+#include "io_and_allocation.hpp"
 #include "updates_and_measures.cuh"
 
 using std::vector;
@@ -287,24 +288,24 @@ template<typename bit_vector_t, typename index_t>
 void updateWholeColumn(vector<bit_vector_t> &Ab,
                                    const index_t size_A,
                                    const uint8_t factorDim,
-                                    const uint8_t k,
+                                    const uint8_t column,
                                     const float density,
                                     const uint32_t seed)
 {
-    updateColumnPart(Ab, size_A, factorDim, k, density, 0, size_A, seed);
+    updateColumnPart(Ab, size_A, factorDim, column, density, 0, size_A, seed);
 }
 
 template<typename bit_vector_t, typename index_t>
 void updateColumnPart(vector<bit_vector_t> &Ab,
                                    const index_t size_A,
                                    const uint8_t factorDim,
-                                   const uint8_t k,
+                                   const uint8_t column,
                                    const float density,
                                    const index_t startline,
                                    const index_t numlines,
                                    const uint32_t seed)
 {
-    const double threshold = (sqrt(1 - pow(1 - density, 1 / double(factorDim))));
+    const double threshold = getInitChance(density, factorDim);
 
     #pragma omp for
     for (index_t id = 0; id < numlines; ++id) {
@@ -316,9 +317,9 @@ void updateColumnPart(vector<bit_vector_t> &Ab,
         const bool set_one = fast_kiss32(state) < threshold * UINT32_MAX;
 
         if (set_one)
-            Ab[i] |= 1 << k;
+            Ab[i] |= 1 << column;
         else //set 0
-            Ab[i] &= ~(1 << k);
+            Ab[i] &= ~(1 << column);
     }
 }
 

@@ -12,6 +12,7 @@
 #include "helper/cuda_helpers.cuh"
 
 #include "config.h"
+#include "io_and_allocation.hpp"
 #include "updates_and_measures.cuh"
 #include "bit_vector_kernels.cuh"
 #include "float_kernels.cuh"
@@ -186,6 +187,8 @@ public:
 
         initilize(handler);
 
+        *handler.distance_ = -1;
+
         return handler.initialized_ = true;
     }
 
@@ -203,7 +206,7 @@ public:
             }
 
             size_t lineBytes = sizeof(factor_t) * handler.lineSize_;
-            size_t lineBytes_padded = sizeof(factor_t) * handler.lineSize_padded_;
+            size_t lineBytes_padded = sizeof(factor_t) * lineSize_padded_;
 
             cudaMemcpy2DAsync(handler.d_A, lineBytes_padded,
                          A.data(), lineBytes,
@@ -369,7 +372,7 @@ public:
         int weight = 1;
     };
 
-    void runAllParallel(const size_t numExperiments, const cuBool_config& config) {
+    void runMultiple(const size_t numExperiments, const cuBool_config& config) {
         finalDistances.resize(numExperiments);
 
         fast_kiss_state32_t state = get_initial_fast_kiss_state32(config.seed);
