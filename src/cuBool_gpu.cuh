@@ -1,5 +1,5 @@
-#ifndef CUBIN_GPU_CUH
-#define CUBIN_GPU_CUH
+#ifndef cuBool_GPU_CUH
+#define cuBool_GPU_CUH
 
 #include <vector>
 #include <iostream>
@@ -23,7 +23,7 @@ using std::ostringstream;
 using std::vector;
 
 template<typename factor_t = uint32_t>
-class CuBin
+class cuBool
 {
     using factor_matrix_t = vector<factor_t>;
     using bit_vector_t = uint32_t;
@@ -43,13 +43,13 @@ class CuBin
     };
 
 public:
-    CuBin(const bit_matrix_t& C,
+    cuBool(const bit_matrix_t& C,
           const index_t height,
           const index_t width,
           const float density,
           const size_t numActiveExperriments = 1)
     {
-        cout << "~~~ GPU CuBin ~~~" << endl; 
+        cout << "~~~ GPU cuBool ~~~" << endl; 
 
         int device_id = 0;
         cudaDeviceProp prop;
@@ -77,7 +77,7 @@ public:
         bestFactors = {};
 
         allocate();
-        cout << "CuBin allocation complete." << endl;
+        cout << "cuBool allocation complete." << endl;
         cout << "Matrix dimensions:\t" << height_ << "x" << width_ << endl;
 
         resetBest();
@@ -85,7 +85,7 @@ public:
         initializeMatrix(C);
 
         if(initialized_) {
-            cout << "CuBin initialization complete." << endl;
+            cout << "cuBool initialization complete." << endl;
         } else {
             exit(1);
         }
@@ -118,7 +118,7 @@ private:
     }
 
 public:
-    ~CuBin() {
+    ~cuBool() {
         cudaFree(d_C);
         for(auto& e : activeExperiments) {
             cudaFree(e.d_A);
@@ -133,7 +133,7 @@ public:
 
     bool initializeMatrix(const bit_matrix_t& C) {
         if( SDIV(height_,32) * width_ != C.size()) {
-            cerr << "CuBin construction: Matrix dimension mismatch." << endl;
+            cerr << "cuBool construction: Matrix dimension mismatch." << endl;
             return false;
         }
 
@@ -198,7 +198,7 @@ public:
     {
         return initializeFactors(activeId, factorDim, [&,this](factor_handler& handler){
             if( A.size() != height_ * handler.lineSize_ || B.size() != width_ * handler.lineSize_) {
-                cerr << "CuBin initialization: Factor dimension mismatch." << endl;
+                cerr << "cuBool initialization: Factor dimension mismatch." << endl;
                 return false;
             }
 
@@ -244,7 +244,7 @@ public:
         auto& handler = activeExperiments[activeId];
 
         if(!initialized_) {
-            cerr << "CuBin matrix not initialized." << endl;
+            cerr << "cuBool matrix not initialized." << endl;
             return false;
         }
 
@@ -350,7 +350,7 @@ public:
         return *bestFactors.distance_;
     }
 
-    struct CuBin_config {
+    struct cuBool_config {
         size_t verbosity = 1;
         index_t linesAtOnce = 0;
         size_t maxIterations = 0;
@@ -369,7 +369,7 @@ public:
         int weight = 1;
     };
 
-    void runAllParallel(const size_t numExperiments, const CuBin_config& config) {
+    void runAllParallel(const size_t numExperiments, const cuBool_config& config) {
         finalDistances.resize(numExperiments);
 
         fast_kiss_state32_t state = get_initial_fast_kiss_state32(config.seed);
@@ -390,16 +390,16 @@ public:
         }
     }
 
-    float run(const size_t activeId, const CuBin_config& config, const cudaStream_t stream = 0) {
+    float run(const size_t activeId, const cuBool_config& config, const cudaStream_t stream = 0) {
         auto& handler = activeExperiments[activeId];
 
         if(!initialized_) {
-            cerr << "CuBin matrix not initialized." << endl;
+            cerr << "cuBool matrix not initialized." << endl;
             return -1;
         }
 
         if(!handler.initialized_) {
-            cerr << "CuBin factor in slot " << activeId << " not initialized." << endl;
+            cerr << "cuBool factor in slot " << activeId << " not initialized." << endl;
             return -1;
         }
 

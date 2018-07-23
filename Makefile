@@ -4,10 +4,10 @@ DEBUG = -g -G
 NVCC = /usr/local/cuda/bin/nvcc
 
 HEADERS = \
-	src/CuBin_gpu.cuh \
+	src/cuBool_gpu.cuh \
 	src/bit_vector_kernels.cuh \
 	src/float_kernels.cuh \
-	src/CuBin_cpu.h \
+	src/cuBool_cpu.h \
 	src/config.h \
 	src/io_and_allocation.hpp \
 	src/updates_and_measures.cuh \
@@ -16,19 +16,19 @@ HEADERS = \
 	src/helper/cuda_helpers.cuh
 
 
-all: CuBin
+all: cuBool
 
-CuBin: src/CuBin_main.cu $(HEADERS)
-	$(NVCC) src/CuBin_main.cu $(NVCC_FLAGS) -o CuBin
+cuBool: src/cuBool_main.cu $(HEADERS)
+	$(NVCC) src/cuBool_main.cu $(NVCC_FLAGS) -o cuBool
 
-# cpu: src/CuBin_main.cu $(HEADERS)
-# 	$(CC) src/CuBin_main.cu $(FLAGS) -o CuBin
+# cpu: src/cuBool_main.cu $(HEADERS)
+# 	$(CC) src/cuBool_main.cu $(FLAGS) -o cuBool
 
 debug: NVCC_FLAGS += $(DEBUG)
-debug: CuBin
+debug: cuBool
 
 clean:
-	rm -f CuBin test_distance
+	rm -f cuBool test_distance
 
-test_distance: source_tests/test_cubin_distance.cu $(HEADERS)
-	$(NVCC) source_tests/test_cubin_distance.cu $(NVCC_FLAGS) -o test_distance
+test_distance: source_tests/test_cuBool_distance.cu $(HEADERS)
+	$(NVCC) source_tests/test_cuBool_distance.cu $(NVCC_FLAGS) -o test_distance

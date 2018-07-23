@@ -9,8 +9,8 @@
 
 #include "config.h"
 #include "io_and_allocation.hpp"
-#include "CuBin_gpu.cuh"
-#include "CuBin_cpu.h"
+#include "cuBool_gpu.cuh"
+#include "cuBool_cpu.h"
 
 using std::cout;
 using std::cerr;
@@ -20,8 +20,8 @@ using std::vector;
 
 using my_bit_vector_t = uint32_t; // only tested uint32_t
 
-using my_cubin = CuBin<my_bit_vector_t>;
-// using my_cubin = Cubin_CPU<my_bit_vector_t>;
+using my_cuBool = cuBool<my_bit_vector_t>;
+// using my_cuBool = cuBool_CPU<my_bit_vector_t>;
 
 int main(int argc, char **argv) {
     mc::args_parser args{argc, argv};
@@ -36,7 +36,7 @@ int main(int argc, char **argv) {
 
     size_t numRuns = args.get<size_t>({"r","runs"}, 1);
 
-    my_cubin::CuBin_config config;
+    my_cuBool::cuBool_config config;
     config.verbosity = args.get<size_t>({"v","verbosity"}, config.verbosity);
     config.factorDim = args.get<uint8_t>({"d","dim","dimension","factordim"}, config.factorDim);
     config.linesAtOnce = args.get<size_t>({"l","lines","linesperkernel"}, config.linesAtOnce);
@@ -106,15 +106,15 @@ int main(int argc, char **argv) {
     vector<my_bit_vector_t> A_vec, B_vec;
 
     size_t numSlots = std::min(size_t(2), numRuns);
-    auto cubin = my_cubin(C0_vec, height, width, density, numSlots);
+    auto cuBool = my_cuBool(C0_vec, height, width, density, numSlots);
 
     TIMERSTART(GPUKERNELLOOP)
-    cubin.runAllParallel(numRuns, config);
+    cuBool.runAllParallel(numRuns, config);
     TIMERSTOP(GPUKERNELLOOP)
 
-    cubin.getBestFactors(A_vec, B_vec);
+    cuBool.getBestFactors(A_vec, B_vec);
 
-    const auto& distances = cubin.getDistances();
+    const auto& distances = cuBool.getDistances();
     writeDistancesToFile(filename, distances);
 
     writeFactorsToFiles(filename + "_best", A_vec, B_vec, config.factorDim);

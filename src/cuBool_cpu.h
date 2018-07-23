@@ -1,5 +1,5 @@
-#ifndef CUBIN_CPU_H
-#define CUBIN_CPU_H
+#ifndef cuBool_CPU_H
+#define cuBool_CPU_H
 
 #include <vector>
 #include <iostream>
@@ -20,7 +20,7 @@ using std::endl;
 
 
 template<typename factor_t = uint32_t>
-class Cubin_CPU
+class cuBool_CPU
 {
     using factor_matrix_t = vector<factor_t>;
     using bit_vector_t = uint32_t;
@@ -39,12 +39,12 @@ class Cubin_CPU
     };
 
 public:
-    Cubin_CPU(const bit_matrix_t& C,
+    cuBool_CPU(const bit_matrix_t& C,
           const index_t height,
           const index_t width,
           const float density)
     {
-        cout << "~~~ CPU CuBin ~~~" << endl; 
+        cout << "~~~ CPU cuBool ~~~" << endl; 
 
         height_ = height;
         width_ = width;
@@ -66,14 +66,14 @@ public:
         initializeMatrix(C);
 
         if(initialized_) {
-            cout << "CuBin initialization complete." << endl;
+            cout << "cuBool initialization complete." << endl;
         } else {
             exit(1);
         }
         cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -" << endl;
     }
 
-    ~Cubin_CPU() {}
+    ~cuBool_CPU() {}
 
     bool resetBest() {
         bestFactors.distance_ = std::numeric_limits<error_t>::max();
@@ -85,7 +85,7 @@ public:
     bool initializeMatrix(const bit_matrix_t& C)
     {
         if( SDIV(height_,32) * width_ != C.size()) {
-            cerr << "CuBin construction: Matrix dimension mismatch." << endl;
+            cerr << "cuBool construction: Matrix dimension mismatch." << endl;
             return false;
         }
 
@@ -107,7 +107,7 @@ public:
 
         // if( SDIV(A.size()/lineSize_,32) * B.size()/lineSize_ != C_.size()) {
         if( A.size() != height_ * activeFactors.lineSize_ || B.size() != width_ * activeFactors.lineSize_) {
-            cerr << "CuBin construction: Factor dimension mismatch." << endl;
+            cerr << "cuBool construction: Factor dimension mismatch." << endl;
             return false;
         }
         
@@ -158,7 +158,7 @@ public:
         activeFactors.distance_ = computeHammingDistanceCPU(activeFactors.A_, activeFactors.B_, C_, height_, width_);
         // activeFactors.distance_ = computeDistanceCPU(activeFactors.A_, activeFactors.B_, C_, height_, width_, weights_rows_, weights_cols_);
 
-        cout << "CuBin initialization complete." << endl;
+        cout << "cuBool initialization complete." << endl;
 
         cout << "Matrix dimensions:\t" << height_ << "x" << width_ << endl;
         cout << "Factor dimension:\t" << int(activeFactors.factorDim_) << endl;
@@ -173,7 +173,7 @@ public:
 
     bool verifyDistance() {
         if(!initialized_) {
-            cerr << "CuBin not initialized." << endl;
+            cerr << "cuBool not initialized." << endl;
             return false;
         }
 
@@ -193,7 +193,7 @@ public:
 
     void getFactors(factor_matrix_t& A, factor_matrix_t& B) {
         if(!initialized_) {
-            cerr << "CuBin not initialized." << endl;
+            cerr << "cuBool not initialized." << endl;
             return;
         }
 
@@ -203,13 +203,13 @@ public:
 
     my_error_t getDistance() {
         if(!initialized_) {
-            cerr << "CuBin not initialized." << endl;
+            cerr << "cuBool not initialized." << endl;
             return -1;
         }
         return activeFactors.distance_;
     }
 
-    struct CuBin_config {
+    struct cuBool_config {
         size_t verbosity = 1;
         size_t linesAtOnce = 0;
         size_t maxIterations = 0;
@@ -226,9 +226,9 @@ public:
         size_t stuckIterationsBeforeBreak = std::numeric_limits<size_t>::max();
     };
 
-    void run(const CuBin_config& config) {
+    void run(const cuBool_config& config) {
         if(!initialized_) {
-            cerr << "CuBin not initialized." << endl;
+            cerr << "cuBool not initialized." << endl;
             return;
         }
 
