@@ -511,16 +511,15 @@ int vectorMatrixMultCompareLineCPU(vector<bit_vector_t> &Ab,
                                    const float temperature,
                                    const float flipManyChance,
                                    const uint32_t flipManyDepth,
-                                   const vector<error_t>& weights_rows,
-                                   const vector<error_t>& weights_cols)
+                                   const error_t weight)
 {
     error_t error_update = 0;
 
-    // // const uint8_t numTests = factorDim+1;
-    const uint8_t numTests = factorDim*2;
-    // // const uint8_t numTests = 1;
-    bit_vector_t A_i_tests[numTests];
-    error_t error_tests[numTests];
+    // const uint8_t numTests = factorDim+1;
+    // const uint8_t numTests = factorDim*2;
+    // const uint8_t numTests = 1;
+    // bit_vector_t A_i_tests[numTests];
+    // error_t error_tests[numTests];
 
     #pragma omp for
     // #pragma omp parallel for reduction(+:error_update)
@@ -531,14 +530,14 @@ int vectorMatrixMultCompareLineCPU(vector<bit_vector_t> &Ab,
         state = get_initial_fast_kiss_state32(seed + id);
 
         const bit_vector_t A_i = Ab[i];
-        // bit_vector_t A_i_changed = Ab[i] ^ get_flip_mask(factorDim, state, flipManyChance, flipManyDepth);
+        bit_vector_t A_i_changed = Ab[i] ^ get_flip_mask(factorDim, state, flipManyChance, flipManyDepth);
 
-        for(uint8_t k=0; k<factorDim; ++k) {
-            A_i_tests[k] = A_i ^ (1 << k);
-            A_i_tests[factorDim+k] = A_i ^ get_flip_mask_many(factorDim, state, flipManyDepth);
-            error_tests[k] = 0;
-            error_tests[factorDim+k] = 0;
-        }
+        // for(uint8_t k=0; k<factorDim; ++k) {
+        //     A_i_tests[k] = A_i ^ (1 << k);
+        //     A_i_tests[factorDim+k] = A_i ^ get_flip_mask_many(factorDim, state, flipManyDepth);
+        //     error_tests[k] = 0;
+        //     error_tests[factorDim+k] = 0;
+        // }
         // A_i_tests[numTests] = A_i ^ get_flip_mask_many(factorDim, state, flipManyDepth);
         // A_i_tests[numTests] = fast_kiss32(state) >> (32 - factorDim);
         // error_tests[numTests] = 0;
@@ -548,54 +547,42 @@ int vectorMatrixMultCompareLineCPU(vector<bit_vector_t> &Ab,
             const index_t vecId = transpose ? j / 32 * size_A + i : i / 32 * size_B + j;
             const index_t vecLane = transpose ? j % 32 : i % 32;
             const int C_ij = (Cb[vecId] >> vecLane) & 1;
-            
-            // const error_t weight = sqrt(weights_rows[i] - 1);
-            // const error_t counterweight = 1;
-            // const error_t weight = 1 / weights_rows[i] - 1 + 1 / weights_cols[j] - 1;
-            // const error_t weight = (weights_rows[i] - 1 + weights_cols[j] - 1);
-            // const error_t weight = 1 + log(weights_rows[i] - 1);
-            // const error_t weight = sqrt(weights_rows[i] - 1) + sqrt(weights_cols[j] - 1);
-            // const error_t counterweight = 2;
-            const error_t weight = 4;
-            // const error_t weight = 3;
-            // const error_t weight = 1;
-            const error_t counterweight = 1;
 
             const int product_old = (A_i         & Bb[j]) ? 1 : 0;
-            // const int product_new = (A_i_changed & Bb[j]) ? 1 : 0;
+            const int product_new = (A_i_changed & Bb[j]) ? 1 : 0;
 
-            // error += error_measure(product_new, C_ij, weight, counterweight)
-            //        - error_measure(product_old, C_ij, weight, counterweight);
+            error += error_measure(product_new, C_ij, weight)
+                   - error_measure(product_old, C_ij, weight);
 
-            for(uint8_t k=0; k<numTests; ++k) {
-                const int product_new = (A_i_tests[k] & Bb[j]) ? 1 : 0;
+            // for(uint8_t k=0; k<numTests; ++k) {
+            //     const int product_new = (A_i_tests[k] & Bb[j]) ? 1 : 0;
 
-                error_tests[k] += error_measure(product_new, C_ij, weight, counterweight)
-                                - error_measure(product_old, C_ij, weight, counterweight);
-            }
+            //     error_tests[k] += error_measure(product_new, C_ij, weight)
+            //                     - error_measure(product_old, C_ij, weight);
+            // }
         }
 
-        // error_t error = 0;
-        bit_vector_t A_i_changed;
-        for(int k=0; k<numTests; ++k) {
-            // if(error_tests[k] != 0 && error_tests[k] < error) {
-            if(error_tests[k] < error) {
-                error = error_tests[k];
-                A_i_changed = A_i_tests[k];
-            }
-        }
-        if(error < 0) {
-            Ab[i] = A_i_changed;
-            error_update += error;
-            continue;
-        }
-        // if(error == INT_MAX) {
-        // if(error >= 0) {
-        else {
-            const uint32_t k = fast_kiss32(state) % numTests;
-            A_i_changed = A_i_tests[k];
-            error = error_tests[k];
-        }
+        // // error_t error = 0;
+        // bit_vector_t A_i_changed;
+        // for(int k=0; k<numTests; ++k) {
+        //     // if(error_tests[k] != 0 && error_tests[k] < error) {
+        //     if(error_tests[k] < error) {
+        //         error = error_tests[k];
+        //         A_i_changed = A_i_tests[k];
+        //     }
+        // }
+        // if(error < 0) {
+        //     Ab[i] = A_i_changed;
+        //     error_update += error;
+        //     continue;
+        // }
+        // // if(error == INT_MAX) {
+        // // if(error >= 0) {
+        // else {
+        //     const uint32_t k = fast_kiss32(state) % numTests;
+        //     A_i_changed = A_i_tests[k];
+        //     error = error_tests[k];
+        // }
 
         if (metro(state, error, temperature, size_B)) {
             Ab[i] = A_i_changed;

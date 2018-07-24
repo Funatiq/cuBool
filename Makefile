@@ -8,6 +8,7 @@ HEADERS = \
 	src/bit_vector_kernels.cuh \
 	src/float_kernels.cuh \
 	src/cuBool_cpu.h \
+	src/bit_vector_functions.h \
 	src/config.h \
 	src/io_and_allocation.hpp \
 	src/updates_and_measures.cuh \

@@ -345,16 +345,12 @@ public:
         float temperature = config.tempStart;
         float weight = config.weight;
         size_t iteration = 0;
+        size_t iteration_master = 0;
         size_t stuckIterations = 0;
         auto distancePrev = activeFactors.distance_;
+        my_error_t distance_update_sum = 0;
         index_t lineToBeChanged;
         uint32_t cpuSeed;
-        // int all_true_positives = computeTruePositiveCPU(activeFactors.A_, activeFactors.B_, C_, height_, width_);
-        // int all_true_positives = computeTruePositiveCPU(activeFactors.A_, activeFactors.B_, C_, height_, width_);
-        confusion_matrix confusion = computeErrorsCPU(activeFactors.A_, activeFactors.B_, C_, height_, width_);
-        confusion_matrix confusion_new;
-
-        factor_matrix_t A_new, B_new;
 
         #pragma omp parallel firstprivate(iteration)
         while( activeFactors.distance_ > config.distanceThreshold
@@ -362,68 +358,75 @@ public:
                 && temperature > config.tempEnd
                 && stuckIterations < config.stuckIterationsBeforeBreak)
         {
+            // Change rows
             #pragma omp single
             {
-                lineToBeChanged = (fast_kiss32(state) % height_);
+                lineToBeChanged = (fast_kiss32(state) % height_) / WARPSPERBLOCK * WARPSPERBLOCK;
                 cpuSeed = fast_kiss32(state) + iteration;
-
-                confusion_new.TP = 0;
-                confusion_new.FP = 0;
-                confusion_new.FN = 0;
-
-                A_new = activeFactors.A_;
-                B_new = activeFactors.B_;
             }
-            uint8_t k = iteration % activeFactors.factorDim_;
-            // Change rows
-            // updateWholeColumn(A_new, height_, activeFactors.factorDim_, k, density_, cpuSeed);
-            updateColumnPart(A_new, height_, activeFactors.factorDim_, k, density_,
-                             lineToBeChanged, min(linesAtOnce, height_), cpuSeed);
+
+            my_error_t distance_update = vectorMatrixMultCompareLineCPU<false>(
+                                            activeFactors.A_, height_, activeFactors.B_, width_, C_, activeFactors.factorDim_,
+                                            lineToBeChanged, min(linesAtOnce, height_), cpuSeed, temperature/10,
+                                            config.flipManyChance, config.flipManyDepth,
+                                            config.weight);
+            // my_error_t distance_update = updateLinesJaccardCPU<false>(
+            //                                 activeFactors.A_, height_, activeFactors.B_, width_, C_, activeFactors.factorDim_,
+            //                                 lineToBeChanged, min(linesAtOnce, height_), cpuSeed, temperature/10,
+            //                                 config.flipManyChance, config.flipManyDepth,
+            //                                 weights_rows_, weights_cols_);
+            // implicit barrier
 
             // Change cols
-            auto confusion_update = optimizeWholeColumn<true>(B_new, width_, A_new, height_, C_, activeFactors.factorDim_, k);
+            #pragma omp single
+            {
+                lineToBeChanged = (fast_kiss32(state) % width_) / WARPSPERBLOCK * WARPSPERBLOCK;
+                cpuSeed = fast_kiss32(state) + iteration;
+            }
+
+            distance_update += vectorMatrixMultCompareLineCPU<true>(
+                                            activeFactors.B_, width_, activeFactors.A_, height_, C_, activeFactors.factorDim_,
+                                            lineToBeChanged, min(linesAtOnce, height_), cpuSeed, temperature/10,
+                                            config.flipManyChance, config.flipManyDepth,
+                                            config.weight);
+            // distance_update += updateLinesJaccardCPU<true>(
+            //                                 activeFactors.B_, width_, activeFactors.A_, height_, C_, activeFactors.factorDim_,
+            //                                 lineToBeChanged, min(linesAtOnce, height_), cpuSeed, temperature/10,
+            //                                 config.flipManyChance, config.flipManyDepth,
+            //                                 weights_cols_, weights_rows_);
             // implicit barrier
 
             #pragma omp atomic
-            confusion_new.TP += confusion_update.TP;
-            #pragma omp atomic
-            confusion_new.FP += confusion_update.FP;
-            #pragma omp atomic
-            confusion_new.FN += confusion_update.FN;
+            distance_update_sum += distance_update;
             #pragma omp barrier
+
 
             #pragma omp single
             {
-                // confusion_new = computeErrorsCPU(A_new, B_new, C_, height_, width_);
-
-                if(confusion_new.total_error() < confusion.total_error()) {
-                // if(confusion_new.precision() > confusion.precision()) {
-                // if(confusion_new.jaccard() > confusion.jaccard()) {
-                // if(metro(state, confusion.precision() - confusion_new.precision(), temperature)) {
-                    activeFactors.A_ = A_new;
-                    activeFactors.B_ = B_new;
-
-                    confusion = confusion_new;
-
-                    // cout << "update accepted" << endl;
+                // int hamming;
+                if(iteration % config.distanceShowEvery == 0) {
+                    // distance_ = computeDistanceCPU(A_, B_, C_, height_, width_, weights_rows_, weights_cols_);
+                    activeFactors.distance_ = computeHammingDistanceCPU(activeFactors.A_, activeFactors.B_, C_, height_, width_);
                 }
 
-                // int hamming;
-                // if(iteration % config.distanceShowEvery == 0) {
-                    // activeFactors.distance_ = computeDistanceCPU(activeFactors.A_, activeFactors.B_, C_, height_, width_, weights_rows_, weights_cols_);
-                    // activeFactors.distance_ = computeHammingDistanceCPU(activeFactors.A_, activeFactors.B_, C_, height_, width_);
-                // }
-                activeFactors.distance_ = confusion.total_error();
+                if(distance_update_sum == distancePrev)
+                    stuckIterations++;
+                else
+                    stuckIterations = 0;
+                distancePrev = distance_update_sum;
 
-                if(config.verbosity > 1 && iteration % config.distanceShowEvery == 0) {
-                    cout << "Iteration: " << iteration
-                              << "\tTP: " << confusion.TP
-                              // << "\terrors: " << confusion.total_error()
-                              // << "\trel_err: " << float(activeFactors.distance_) / height_ / width_
+                if(config.verbosity > 0 && iteration % config.distanceShowEvery == 0) {
+                    std::cout << "Iteration: " << iteration
+                              << "\tupdate: " << distance_update_sum / config.distanceShowEvery
+                              // << "\trel_err: " << (float) distance_ / (height_*width_)
                               << "\thamming: " << activeFactors.distance_
                               << "\ttemp: " << temperature;
-                    cout << endl;
+                    std::cout << std::endl;
+
+                    // std::cout << "\tseed: " << (int) cpuSeed << std::endl;
+                    distance_update_sum = 0;
                 }
+
                 if(iteration % config.tempStep == 0) {
                     temperature *= config.tempFactor;
                     if(weight > 1)
@@ -431,17 +434,14 @@ public:
                     if(weight < 1)
                         weight = 1;
                 }
-                if(activeFactors.distance_ == distancePrev)
-                    stuckIterations++;
-                else
-                    stuckIterations = 0;
-                distancePrev = activeFactors.distance_;
+
+                iteration_master = iteration;
             }
         }
 
         if(config.verbosity > 0) {
             cout << "\tBreak condition:\t";
-            if (!(iteration < config.maxIterations))
+            if (!(iteration_master < config.maxIterations))
                 cout << "Reached iteration limit: " << config.maxIterations;
             if (!(activeFactors.distance_ > config.distanceThreshold))
                 cout << "Distance below threshold: " << config.distanceThreshold;
@@ -449,7 +449,7 @@ public:
                 cout << "Temperature below threshold";
             if (!(stuckIterations < config.stuckIterationsBeforeBreak))
                 cout << "Stuck for " << stuckIterations << " iterations";
-            cout << " after " << iteration << " iterations.\n";
+            cout << " after " << iteration_master << " iterations.\n";
         }
 
         // use hamming distance for final judgement
