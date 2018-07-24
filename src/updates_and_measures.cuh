@@ -83,44 +83,38 @@ bool metro(fast_kiss_state32_t state, const error_t error, const float temperatu
 
 
 // error measures ---------------------------------------------------------------
+// weight*false negatives + false positives
 template<typename error_t>
 __inline__ HOST_DEVICE_QUALIFIER
 error_t error_measure(const int test, const int truth, const error_t weigth) {
-    // const error_t w = (truth == 1) ? weigth : 1;
-    // return w * (test ^ truth);
     return (truth == 1) ? weigth * (test ^ truth) : (test ^ truth);
 }
 
-template<typename error_t>
-__inline__ HOST_DEVICE_QUALIFIER
-error_t error_measure(const int test, const int truth, const error_t weigth_1, const error_t weigth_0) {
-    return (truth == 1) ? weigth_1 * (test ^ truth) : weigth_0 * (test ^ truth);
-}
-
+// weigth_0*false negatives + weigth_1*false positives
 // template<typename error_t>
 // __inline__ HOST_DEVICE_QUALIFIER
-// error_t error_measure(const int test, const int truth, const error_t weigth_1, const error_t weigth_0) {
-//     return (truth == 1) ? -1 * weigth_1 * test : weigth_0 * test;
+// error_t error_measure(const int test, const int truth, const error_t weigth_0, const error_t weigth_1) {
+//     return (truth == 1) ? weigth_0 * (test ^ truth) : weigth_1 * (test ^ truth);
 // }
 
-template<typename error_t>
-__inline__ HOST_DEVICE_QUALIFIER
-error_t error_measurew(const int test, const int truth, const error_t weigth_0) {
-    return (truth == 1) ? -1 * test : weigth_0*0.2f * test;
-}
-
+// -weight*true positives + false positives
+// template<typename error_t>
 // __inline__ HOST_DEVICE_QUALIFIER
-// int error_measure(const int test, const int truth, const int weight = 0) {
+// error_t error_measure(const int test, const int truth, const error_t weigth) {
+//     return (truth == 1) ? -1 * weigth * test : test;
+// }
+
+// false negatives + false positives
+// template<typename error_t>
+// __inline__ HOST_DEVICE_QUALIFIER
+// int error_measure(const int test, const int truth, const error_t weight = 1) {
 //     return test ^ truth;
 // }
 
-__inline__ HOST_DEVICE_QUALIFIER
-int error_measure1(const int test, const int truth, const int weight) {
-    return (truth == 1) ? 1 * (test ^ truth) : (test ^ truth);
-}
-
+// weight*false positives + false negatives
+// template<typename error_t>
 // __inline__ HOST_DEVICE_QUALIFIER
-// int error_measure3(const int test, const int truth, const int weight) {
+// error_t error_measure3(const int test, const int truth, const error_t weight) {
 //     return (truth == 0) ? weight * (test ^ truth) : (test ^ truth);
 // }
 

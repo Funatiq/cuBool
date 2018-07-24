@@ -82,13 +82,13 @@ confusion_matrix computeErrorsCPU(const vector<bit_vector_t> &Ab,
 }
 
 template<typename bit_vector_t, typename index_t>
-float computeTruePositiveCPU(const vector<bit_vector_t> &Ab,
+size_t computeTruePositiveCPU(const vector<bit_vector_t> &Ab,
                        const vector<bit_vector_t> &Bb,
                        const vector<bit_vector_t> &Cb,
                        const index_t height,
                        const index_t width)
 {
-    float true_positives = 0;
+    size_t true_positives = 0;
 
     #pragma omp parallel for reduction(+:true_positives)
     for(index_t j=0; j < width; ++j) {
@@ -153,8 +153,7 @@ error_t computeDistanceCPU(const vector<bit_factor_t> &Ab,
                            const vector<bit_matrix_t> &Cb,
                            const index_t height,
                            const index_t width,
-                           const vector<error_t>& weights_rows,
-                           const vector<error_t>& weights_cols)
+                           const error_t weight)
 {
     error_t error = 0;
 
@@ -168,21 +167,7 @@ error_t computeDistanceCPU(const vector<bit_factor_t> &Ab,
             const index_t vecLane = i % 32;
             const int C_ij = (Cb[vecId] >> vecLane) & 1;
 
-            // const error_t weight_average = (weights_rows[i] + weights_cols[j]) / 2;
-
-            // const error_t weight = 1 / weights_rows[i] - 1 + 1 / weights_cols[j] - 1;
-            // const error_t weight = (weights_rows[i] - 1 + weights_cols[j] - 1);
-            // const error_t weight = 2 + log(weights_rows[i] - 1) + log(weights_cols[j] - 1);
-            // weight = 1 + log(weight);
-            // weight = sqrt(weight);
-            // const error_t weight = sqrt(weights_rows[i] - 1) + sqrt(weights_cols[j] - 1);
-            // const error_t counterweight = 2;
-            const error_t weight = 4;
-            // const error_t weight = 3;
-            // const error_t weight = 1;
-            const error_t counterweight = 1;
-
-            error += error_measure(product, C_ij, weight, counterweight);
+            error += error_measure(product, C_ij, weight);
         }
     }
 

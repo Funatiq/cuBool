@@ -77,7 +77,7 @@ void computeDistanceRowsShared(const bit_factor_t * __restrict__ Ab,
                      const index_t width,
                      const index_t padded_width,
                      const uint8_t factorDim,
-                     const int weight,
+                     const error_t weight,
                      error_t *global_error)
 {
     __shared__ bit_factor_t B_block[ 32 * WARPSPERBLOCK ];

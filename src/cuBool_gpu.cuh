@@ -13,7 +13,6 @@
 
 #include "config.h"
 #include "io_and_allocation.hpp"
-#include "updates_and_measures.cuh"
 #include "bit_vector_kernels.cuh"
 #include "float_kernels.cuh"
 
@@ -157,7 +156,7 @@ public:
     }
 
 private:
-    void calculateDistance(const factor_handler& handler, const int weight = 1, const cudaStream_t stream = 0) {
+    void calculateDistance(const factor_handler& handler, const error_t weight = 1, const cudaStream_t stream = 0) {
         cudaMemsetAsync(handler.d_distance_, 0, sizeof(error_t), stream);
         // cudaStreamSynchronize(stream); CUERR
 
@@ -402,7 +401,7 @@ public:
         }
 
         if(!handler.initialized_) {
-            cerr << "cuBool factor in slot " << activeId << " not initialized." << endl;
+            cerr << "cuBool factors in slot " << activeId << " not initialized." << endl;
             return -1;
         }
 
@@ -502,9 +501,6 @@ public:
             }
         }
 
-        // use hamming distance for final judgement
-        calculateDistance(handler, 1, stream);
-
         if(config.verbosity > 0) {
             out << "\tBreak condition for slot " << activeId << ":\t";
             if (!(iteration < config.maxIterations))
@@ -516,7 +512,12 @@ public:
             if (!(stuckIterations < config.stuckIterationsBeforeBreak))
                 out << "Stuck for " << stuckIterations << " iterations";
             out << " after " << iteration << " iterations.\n";
-            // out << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n";
+        }
+
+        // use hamming distance for final judgement
+        calculateDistance(handler, 1, stream);
+
+        if(config.verbosity > 0) {
             out << "\tFinal distance for slot " << activeId
                  << "\tabs_err: " << *handler.distance_
                  << "\trel_err: " << float(*handler.distance_) / height_ / width_
