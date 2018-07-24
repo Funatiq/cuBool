@@ -5,11 +5,13 @@
 #include <iostream>
 #include <limits>
 #include <cmath>
+#include <omp.h>
 
 #include "helper/rngpu.hpp"
 #include "helper/confusion.h"
 
 #include "config.h"
+#include "io_and_allocation.hpp"
 #include "bit_vector_functions.h"
 // #include "float_functions.h"
 
@@ -60,6 +62,8 @@ public:
             lineSize_padded_ = 32;
         }
 
+        max_parallel_lines_ = omp_get_max_threads();
+
         bestFactors = {};
         resetBest();
         cout << "Matrix dimensions:\t" << height_ << "x" << width_ << endl;
@@ -74,7 +78,7 @@ public:
         cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -" << endl;
     }
 
-    ~cuBool() {}
+    ~cuBool() = default;
 
     bool resetBest() {
         bestFactors.distance_ = std::numeric_limits<error_t>::max();
@@ -216,6 +220,8 @@ public:
             cout << "----- !Distances differ! -----\n";
             cout << "Running distance:  " << activeFactors.distance_ << "\n";
             cout << "Real distance:     " << distance_proof << endl;
+        } else {
+            cout << "Distance verified" << endl;
         }
         return equal;
     } 
@@ -297,34 +303,50 @@ public:
             return -1;
         }
 
-        index_t linesAtOnce = config.linesAtOnce;
+        if(!activeFactors.initialized_) {
+            cerr << "cuBool active factors not initialized." << endl;
+            return -1;
+        }
+
+        activeFactors.distance_ = computeDistanceCPU(activeFactors.A_, activeFactors.B_, C_, height_, width_, config.weight);
 
         if(config.verbosity > 0) {
+            cout << "\tStart distance"
+                 << "\tabs_err: " << activeFactors.distance_
+                 << "\trel_err: " << float(activeFactors.distance_) / height_ / width_
+                 << '\n';
+        }
+
+        index_t linesAtOnce = config.linesAtOnce;
+        if(config.loadBalance) {
+            linesAtOnce = linesAtOnce / max_parallel_lines_ * max_parallel_lines_;
+            if (!linesAtOnce) linesAtOnce = max_parallel_lines_;
+        }
+
+        if(config.verbosity > 1) {
             cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n";
             cout << "- - - - Starting " << config.maxIterations
-                      << " CPU iterations, changing " << linesAtOnce
-                      << " lines each time\n";
+                  << " CPU iterations, changing " << linesAtOnce
+                  << " lines each time\n";
             cout << "- - - - Showing error every " << config.distanceShowEvery
                       << " steps\n";
             if(config.tempStart > 0) {
                 cout << "- - - - Start temperature " << config.tempStart
-                          << " multiplied by " << config.tempFactor
-                          << " every " << config.tempStep
-                          << " steps\n";
+                      << " multiplied by " << config.tempFactor
+                      << " every " << config.tempStep
+                      << " steps\n";
 
             }
-            cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -";
-            cout << endl;
+            cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -"
+                << endl;
         }
 
         fast_kiss_state32_t state = get_initial_fast_kiss_state32(config.seed);
-        // float temperature = 0;
         float temperature = config.tempStart;
+        float weight = config.weight;
         size_t iteration = 0;
         size_t stuckIterations = 0;
         auto distancePrev = activeFactors.distance_;
-        // my_error_t tempStep_distance = 1;
-        // my_error_t update_sum = 0;
         index_t lineToBeChanged;
         uint32_t cpuSeed;
         // int all_true_positives = computeTruePositiveCPU(activeFactors.A_, activeFactors.B_, C_, height_, width_);
@@ -393,30 +415,21 @@ public:
                 // }
                 activeFactors.distance_ = confusion.total_error();
 
-                if(config.verbosity > 0 && iteration % config.distanceShowEvery == 0) {
+                if(config.verbosity > 1 && iteration % config.distanceShowEvery == 0) {
                     cout << "Iteration: " << iteration
-                              // << "\tupdate: " << update_sum / config.distanceShowEvery
                               << "\tTP: " << confusion.TP
                               // << "\terrors: " << confusion.total_error()
                               // << "\trel_err: " << float(activeFactors.distance_) / height_ / width_
                               << "\thamming: " << activeFactors.distance_
                               << "\ttemp: " << temperature;
                     cout << endl;
-
-                    // cout << "\tseed: " << (int) cpuSeed << endl;
-                    // update_sum = 0;
-
-                    // tempStep_distance = activeFactors.distance_;
                 }
                 if(iteration % config.tempStep == 0) {
-                    //delay temperature
-                    // if(temperature <= 0) temperature = config.tempStart;
                     temperature *= config.tempFactor;
-                    // if((float) activeFactors.distance_ / tempStep_distance < 0.9f)
-                    //     temperature /= config.tempFactor;
-                    // else
-                    //     temperature *= config.tempFactor;
-                    // tempStep_distance = activeFactors.distance_;
+                    if(weight > 1)
+                        weight *= config.tempFactor;
+                    if(weight < 1)
+                        weight = 1;
                 }
                 if(activeFactors.distance_ == distancePrev)
                     stuckIterations++;
@@ -427,20 +440,35 @@ public:
         }
 
         if(config.verbosity > 0) {
+            cout << "\tBreak condition:\t";
             if (!(iteration < config.maxIterations))
-                cout << "Reached iteration limit: " << config.maxIterations << endl;
+                cout << "Reached iteration limit: " << config.maxIterations;
             if (!(activeFactors.distance_ > config.distanceThreshold))
-                cout << "Distance below threshold." << endl;
+                cout << "Distance below threshold: " << config.distanceThreshold;
             if (!(temperature > config.tempEnd))
-                cout << "Temperature below threshold." << endl;
+                cout << "Temperature below threshold";
             if (!(stuckIterations < config.stuckIterationsBeforeBreak))
-                cout << "Stuck for " << stuckIterations << " iterations." << endl;
+                cout << "Stuck for " << stuckIterations << " iterations";
+            cout << " after " << iteration << " iterations.\n";
         }
-        cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n";
-        cout << "Final result: "
-                  << "\tabs_err: " << activeFactors.distance_
-                  << "\trel_err: " << float(activeFactors.distance_) / height_ / width_
-                  << endl;
+
+        // use hamming distance for final judgement
+        activeFactors.distance_ = computeDistanceCPU(activeFactors.A_, activeFactors.B_, C_, height_, width_, 1);
+
+        if(config.verbosity > 0) {
+            cout << "\tFinal distance"
+                 << "\tabs_err: " << activeFactors.distance_
+                 << "\trel_err: " << float(activeFactors.distance_) / height_ / width_
+                 << endl;
+        }
+
+        if(activeFactors.distance_ < bestFactors.distance_) {
+                if(config.verbosity > 0) {
+                    cout << "\tResult is better than previous best. Saving new best." << endl;
+                }
+
+                bestFactors = activeFactors;
+        }
 
         return float(activeFactors.distance_) / height_ / width_;
     }  
@@ -461,6 +489,8 @@ private:
     index_t height_ = 0;
     index_t width_ = 0;
     size_t lineSize_padded_ = 1;
+
+    int max_parallel_lines_;
 
     factor_handler bestFactors;
     factor_handler activeFactors;
