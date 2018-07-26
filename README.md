@@ -1,6 +1,8 @@
 ﻿# cuBool
 **CU**DA-accelerated **Bool**ean Matrix Factorization
 
+enhancements of https://github.com/alamoth/CuBin by Adrian Lamoth
+
 Boolean Matrix Factorization (BMF) is a commonly
 used technique in the field of unsupervised data analytics. The
 goal is to decompose a ground truth matrix C of shape m × n
