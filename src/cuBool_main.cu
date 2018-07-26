@@ -92,20 +92,13 @@ int main(int argc, char **argv) {
     float density;
     
     vector<my_bit_vector_t> A0_vec, B0_vec, C0_vec;
-    string ending = ".in";
-    if (endsWith(filename, ending)) {
-        // Read file and save matrix in C0
-        // COO coordinates
-        readInputFileData(filename, C0_vec, height, width, density);
-    } else if (filename.compare("test") == 0) {
+
+    if (filename.compare("test") == 0) {
         height = 5000;
-        width = 4000;
-        // height = 5*1024;
-        // width = 5*1024;
+        width = 5000;
         generate_random_matrix(height, width, config.factorDim, 4, A0_vec, B0_vec, C0_vec, density);
     } else {
-        cerr << "Bad input file" << endl;
-        return 0;
+        readInputFileData(filename, C0_vec, height, width, density);
     }
 
     vector<my_bit_vector_t> A_vec, B_vec;

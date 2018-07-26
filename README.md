@@ -34,3 +34,7 @@ make cuBool_cpu
 How to use
 ----------
 Call `./cuBool` or `./cuBool_cpu` without parameters to see all parameter options.
+
+Required structure of dataset file:
+- First line defines matrix: `<rows> <column> <number of nonzeros>`
+- Every other line defines coordinates of a single entry: `<row> <column>`

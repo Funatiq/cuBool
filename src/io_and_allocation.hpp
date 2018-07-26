@@ -207,9 +207,9 @@ void readInputFileData(const string filename,
     C0b.clear();
     C0b.resize(sizeCb,0);
 
-    vector<uint32_t> row_permutation(height);
-    std::iota(row_permutation.begin(), row_permutation.end(), 0);
-    std::shuffle(row_permutation.begin(), row_permutation.end(), std::mt19937{std::random_device{}()});
+    // vector<uint32_t> row_permutation(height);
+    // std::iota(row_permutation.begin(), row_permutation.end(), 0);
+    // std::shuffle(row_permutation.begin(), row_permutation.end(), std::mt19937{std::random_device{}()});
 
     int nonzeroelements = 0;
     for(; ones > 0; --ones) {
@@ -225,7 +225,7 @@ void readInputFileData(const string filename,
     density = float(nonzeroelements) / height / width;
 
     printf("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
-    printf("READING OF .DATA FILE COMPLETE\n");
+    printf("READING OF DATA FILE COMPLETE\n");
     printf("Read height: %i\nRead width: %i\nNon-zero elements: %i\nDensity: %f\n",
            height, width, nonzeroelements, density);
     printf("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
