@@ -12,7 +12,7 @@ HEADERS = \
 	src/config.h \
 	src/io_and_allocation.hpp \
 	src/updates_and_measures.cuh \
-	src/helper/args_parser.h \
+	src/helper/clipp.h \
 	src/helper/rngpu.hpp \
 	src/helper/cuda_helpers.cuh
 

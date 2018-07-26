@@ -356,7 +356,7 @@ public:
         size_t verbosity = 1;
         index_t linesAtOnce = 0;
         size_t maxIterations = 0;
-        error_t distanceThreshold = std::numeric_limits<error_t>::min();
+        error_t distanceThreshold = std::numeric_limits<error_t>::lowest();
         size_t distanceShowEvery = std::numeric_limits<size_t>::max();
         float tempStart = 0.0f;
         float tempEnd = -1.0f;

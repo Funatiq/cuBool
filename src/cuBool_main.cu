@@ -5,7 +5,7 @@
 // #include <limits>
 
 #include "helper/rngpu.hpp"
-#include "helper/args_parser.h"
+#include "helper/clipp.h"
 
 #include "config.h"
 #include "io_and_allocation.hpp"
@@ -22,40 +22,43 @@ using std::endl;
 using std::string;
 using std::vector;
 
+using clipp::value;
+using clipp::option;
+
 using my_bit_vector_t = uint32_t; // only tested uint32_t
 using my_cuBool = cuBool<my_bit_vector_t>;
 
 int main(int argc, char **argv) {
-    mc::args_parser args{argc, argv};
-
     string filename;
-    if(args.non_prefixed_count() > 0) {
-        filename = args.non_prefixed(0);
-    } else {
-        cerr << "No input file provided. Abort." << endl;
+    size_t numRuns = 1;
+    my_cuBool::cuBool_config config;
+
+    auto cli = (
+        value("dataset file", filename),
+        (option("-r") & value("runs", numRuns)) % "number of runs",
+        (option("-v") & value("verbosity", config.verbosity)) % "verbosity",
+        (option("-d") & value("dim", config.factorDim)) % "latent dimension",
+        (option("-l") & value("lines", config.linesAtOnce)) % "number of lines to update per iteration",
+        (option("-i") & value("iter", config.maxIterations)) % "maximum number of iterations",
+        (option("-e") & value("err", config.distanceThreshold)) % "error threshold",
+        (option("--show") & value("s", config.distanceShowEvery)) % "show distance every <s> iterations",
+        (option("--ts") & value("start temp", config.tempStart)) % "start temperature",
+        (option("--te") & value("end temp", config.tempEnd)) % "end temperature",
+        (option("--tf") & value("factor", config.tempFactor)) % "temperature reduction factor",
+        (option("--tm") & value("move", config.tempStep)) % "reduce temperature every <tm> iterations",
+        (option("--seed") & value("seed", config.seed)) % "seed for pseudo random numbers",
+        (option("--fc") & value("flip chance", config.flipManyChance)) % "chance to flip multiple bits",
+        (option("--fd") & value("flip depth", config.flipManyDepth)) % "flip chance for each bit in multi flip (negative power of two)",
+        (option("-w", "--weight") & value("weight", config.weight)) % "weight in error measure",
+        (option("--stuck") & value("s", config.stuckIterationsBeforeBreak)) % "stop if stuck for <s> iterations"
+    );
+
+    auto parseResult = clipp::parse(argc, argv, cli);
+    if(!parseResult) {
+        auto fmt = clipp::doc_formatting{}.doc_column(30);
+        cout << clipp::make_man_page(cli, argv[0], fmt);
         return 1;
     }
-
-    size_t numRuns = args.get<size_t>({"r","runs"}, 1);
-
-    my_cuBool::cuBool_config config;
-    config.verbosity = args.get<size_t>({"v","verbosity"}, config.verbosity);
-    config.factorDim = args.get<uint8_t>({"d","dim","dimension","factordim"}, config.factorDim);
-    config.linesAtOnce = args.get<size_t>({"l","lines","linesperkernel"}, config.linesAtOnce);
-    config.maxIterations = args.get<size_t>({"i","iter","iterations"}, config.maxIterations);
-    config.distanceThreshold = args.get<int>({"e","threshold"}, config.distanceThreshold);
-    config.distanceShowEvery = args.get<size_t>({"show","showdistance"}, config.distanceShowEvery);
-    config.tempStart = args.get<float>({"ts","tempstart","starttemp"}, config.tempStart);
-    config.tempEnd = args.get<float>({"te","tempend","endtemp"}, config.tempEnd);
-    config.tempFactor = args.get<float>({"tf","factor","tempfactor"}, config.tempFactor);
-    config.tempStep = args.get<size_t>({"tm","step","tempstep","move","tempmove"}, config.tempStep);
-    config.seed = args.get<uint32_t>({"seed"}, config.seed);
-    config.loadBalance = args.contains({"b","balance","loadbalance"});
-    config.flipManyChance = args.get<float>({"fc","chance","flipchance","flipmanychance"}, config.flipManyChance);
-    config.flipManyDepth = args.get<uint32_t>({"fd","depth","flipdepth","flipmanydepth"}, config.flipManyDepth);
-    config.weight = args.get<int>({"w","weight"}, config.weight);
-
-    config.stuckIterationsBeforeBreak = args.get<size_t>({"stuck"}, config.stuckIterationsBeforeBreak);
 
     cout << "verbosity " << config.verbosity << "\n"
         << "factorDim " << int(config.factorDim) << "\n"
