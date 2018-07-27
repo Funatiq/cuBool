@@ -236,197 +236,115 @@ bool endsWith(const string& s, const string& suffix) {
     return s.rfind(suffix) == (s.size()-suffix.size());
 }
 
-// Initialization of a factor
-void initFactor(vector<uint32_t> &Ab, 
+
+// Initialization of a factor, setting all bits of a row at once
+void initFactorRowwise(vector<uint32_t> &Ab, 
                         const int height,
                         const uint8_t factorDim,
                         const uint32_t seed, 
-                        const float threshold)
+                        const int randDepth)
 {
     Ab.clear();
-    Ab.resize(height, 0);
 
-    const int rand_depth = -log2(threshold)+1;
-
-    // cout << "Init threshold: " << threshold << endl;
-    // cout << "Init rand depth: " << rand_depth << " -> " << pow(2, -rand_depth) << endl;
-
-    if(rand_depth < 16) {
+    if(randDepth < 16) {
         const uint32_t factorMask = UINT32_MAX >> (32-factorDim);
+        Ab.resize(height, factorMask);
 
         // int counter = 0;
         #pragma omp parallel //reduce(+:counter)
         {
             fast_kiss_state32_t state = get_initial_fast_kiss_state32(seed + omp_get_thread_num());
+
             #pragma omp for
             for (int i = 0; i < height; i++) {
-                Ab[i] = factorMask;
-                for(int d = 0; d < rand_depth; ++d) {
+                for(int d = 0; d < randDepth; ++d) {
                     Ab[i] &= fast_kiss32(state);
                 }
                 // if(Ab[i]) ++counter;
             }
         }
         // cout << "nonzero rows in factor: " << counter << endl;
+    } else {
+        Ab.resize(height, 0);
     }
 }
 
-// Initialization of A and B
-void initializeFactors( vector<uint32_t> &Ab, vector<uint32_t> &Bb, 
-                        const int height, const int width,
+// Initialization of a factor, setting every bits of a row on its own
+void initFactorBitwise(vector<uint32_t> &Ab,
+                        const int height,
                         const uint8_t factorDim,
-                        const float density,
-                        fast_kiss_state32_t state)
+                        const uint32_t seed, 
+                        const uint32_t threshold_ui32)
 {
     Ab.clear();
     Ab.resize(height, 0);
-    Bb.clear();
-    Bb.resize(width, 0);
 
-    float threshold = getInitChance(density, factorDim);
-
-    const int rand_depth = -log2(threshold)+1;
-    // const int rand_depth = 5;
-
-    cout << "Init threshold: " << threshold << endl;
-    cout << "Init rand depth: " << rand_depth << " -> " << pow(2, -rand_depth) << endl;
-
-    if(rand_depth < 15) {
-        const uint32_t factorMask = UINT32_MAX >> (32-factorDim);
-
-        int counter = 0;
+    // int counter = 0;
+    #pragma omp parallel //reduce(+:counter)
+    {
+        fast_kiss_state32_t state = get_initial_fast_kiss_state32(seed + omp_get_thread_num());
+        
+        #pragma omp for
         for (int i = 0; i < height; i++) {
-            Ab[i] = factorMask;
-            for(int d = 0; d < rand_depth; ++d) {
-                Ab[i] &= fast_kiss32(state);
+            for (int j = 0; j < factorDim; j++) {
+                if (fast_kiss32(state) < threshold_ui32)
+                    Ab[i] |= 1 << j;
             }
-            if(Ab[i]) ++counter;
+            // if(Ab[i]) ++counter;
         }
-        cout << "# Ai != 0: " << counter << endl;
-
-        counter = 0;
-        for (int j = 0; j < width; j++) {
-            Bb[j] = factorMask;
-            for(int d = 0; d < rand_depth; ++d) {
-                Bb[j] &= fast_kiss32(state);
-            }
-            if(Bb[j]) ++counter;
-        }
-        cout << "# Bj != 0: " << counter << endl;
     }
-    
-    cout << "Initialization of A and B complete\n";
-    for(int i=0; i<38; ++i)
-        cout << "- ";
-    cout << endl;
+    // cout << "nonzero rows in factor: " << counter << endl;
 }
 
-// Initialization of A and B
-void initializeFactors2( vector<uint32_t> &Ab, vector<uint32_t> &Bb, 
-                        const int height, const int width,
+// Initialization of a factor, setting every bits of a row on its own
+void initFactorBitwise( vector<float> &A,
+                        const int height,
                         const uint8_t factorDim,
-                        const float density,
-                        fast_kiss_state32_t state)
-{
-    Ab.clear();
-    Ab.resize(height, 0);
-    Bb.clear();
-    Bb.resize(width, 0);
-
-    uint32_t threshold = UINT32_MAX * getInitChance(density, factorDim);
-
-    cout << "Init threshold: " << float(threshold)/UINT32_MAX << endl;
-
-    // Initialize A and B
-    int counter = 0;
-    for (int i = 0; i < height; i++) {
-        #pragma unroll
-        for (int j = 0; j < factorDim; j++) {
-            if (fast_kiss32(state) < threshold)
-                Ab[i] |= 1 << j;
-        }
-        if(Ab[i]) ++counter;
-    }
-    cout << "# Ai != 0: " << counter << endl;
-
-    counter = 0;
-    for (int i = 0; i < width; i++) {
-        #pragma unroll
-        for (int j = 0; j < factorDim; j++) {
-            if (fast_kiss32(state) < threshold)
-                Bb[i] |= 1 << j;
-        }
-        if(Bb[i]) ++counter;
-    }
-    cout << "# Bj != 0: " << counter << endl;
-
-    
-    printf("Initialization of A and B complete\n");
-    printf("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
-}
-
-// Initialization of A and B
-void initializeFactors( vector<float> &A, vector<float> &B, 
-                        const int height, const int width,
-                        const uint8_t factorDim,
-                        const float density,
-                        fast_kiss_state32_t state)
+                        const uint32_t seed,
+                        const uint32_t threshold_ui32)
 {
     A.clear();
     A.resize(height * factorDim, 0);
-    B.clear();
-    B.resize(width * factorDim, 0);
 
-    // Initialize A and B
-    for (int i = 0; i < height; i++) {
-        #pragma unroll
-        for (int j = 0; j < factorDim; j++) {
-            A[i * factorDim + j] = (float) fast_kiss32(state) / UINT32_MAX;
+    // int counter = 0;
+    #pragma omp parallel //reduce(+:counter)
+    {
+        fast_kiss_state32_t state = get_initial_fast_kiss_state32(seed + omp_get_thread_num());
+
+        #pragma omp for
+        for (int i = 0; i < height; i++) {
+            for (int j = 0; j < factorDim; j++) {
+                // two possibilities:
+                // 1) set value 0 or 1
+                // 2) set random value in [0,0.5] or [0.5,1]
+                if(fast_kiss32(state) < threshold_ui32) {
+                    A[i * factorDim + j] = 1;
+                    // A[i * factorDim + j] = (fast_kiss32(state) / float(UINT32_MAX)) / 2 + 0.5f;
+                } else {
+                    // A[i * factorDim + j] = (fast_kiss32(state) / float(UINT32_MAX)) / 2;
+                }
+            }
         }
     }
-
-    for (int i = 0; i < width; i++) {
-        #pragma unroll
-        for (int j = 0; j < factorDim; j++) {
-            B[i * factorDim + j] = (float) fast_kiss32(state) / UINT32_MAX;
-        }
-    }
-    
-    printf("Initialization of A and B complete\n");
-    printf("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
 }
 
-// Initialization of A and B
-void initializeFactors2( vector<float> &A, vector<float> &B,
-                         const int height, const int width,
-                         const uint8_t factorDim,
-                         const float density,
-                         fast_kiss_state32_t state)
+template <typename factor_t>
+void initFactor(vector<factor_t> &Ab,
+                        const int height,
+                        const uint8_t factorDim,
+                        const uint32_t seed,
+                        const float threshold)
 {
-    A.clear();
-    A.resize(height * factorDim, 0);
-    B.clear();
-    B.resize(width * factorDim, 0);
+    const int randDepth = -log2(threshold)+1;
 
-    uint32_t threshold = UINT32_MAX * getInitChance(density, factorDim);
+    // cout << "Init threshold: " << threshold << endl;
+    // cout << "Init rand depth: " << randDepth << " -> " << pow(2, -randDepth) << endl;
 
-    // Initialize A and B
-    for (int i = 0; i < height; i++) {
-        #pragma unroll
-        for (int j = 0; j < factorDim; j++) {
-            A[i * factorDim + j] = fast_kiss32(state) < threshold;
-        }
+    if(randDepth < factorDim && std::is_same<factor_t, uint32_t>::value) {
+        initFactorRowwise(Ab, height, factorDim, seed, randDepth);
+    } else {
+        initFactorBitwise(Ab, height, factorDim, seed, threshold * UINT32_MAX);
     }
-
-    for (int i = 0; i < width; i++) {
-        #pragma unroll
-        for (int j = 0; j < factorDim; j++) {
-            B[i * factorDim + j] = fast_kiss32(state) < threshold;
-        }
-    }
-    
-    printf("Initialization of A and B complete\n");
-    printf("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
 }
 
 // Write result factors to file
