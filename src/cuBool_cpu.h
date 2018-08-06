@@ -24,13 +24,15 @@ using std::min;
 template<typename factor_t = uint32_t>
 class cuBool
 {
+public:
     using factor_matrix_t = vector<factor_t>;
     using bit_vector_t = uint32_t;
     using bit_matrix_t = vector<bit_vector_t>;
 
     using index_t = uint32_t;
-    using my_error_t = float;
-
+    using error_t = float;
+    using cuBool_config = cuBool_config<index_t, error_t>;
+private:
     struct factor_handler {
         factor_matrix_t A_;
         factor_matrix_t B_;
@@ -157,7 +159,6 @@ public:
 
             activeFactors.A_ = A;
             activeFactors.B_ = B;
-        
         });
     }
 
@@ -262,25 +263,6 @@ public:
         return bestFactors.distance_;
     }
 
-    struct cuBool_config {
-        size_t verbosity = 1;
-        index_t linesAtOnce = 0;
-        size_t maxIterations = 0;
-        error_t distanceThreshold = std::numeric_limits<error_t>::min();
-        size_t distanceShowEvery = std::numeric_limits<size_t>::max();
-        float tempStart = 0.0f;
-        float tempEnd = -1.0f;
-        float tempFactor = 0.98f;
-        size_t tempStep = std::numeric_limits<size_t>::max();
-        uint32_t seed = 0;
-        bool loadBalance = false;
-        float flipManyChance = 0.1f;
-        uint32_t flipManyDepth = 2;
-        size_t stuckIterationsBeforeBreak = std::numeric_limits<size_t>::max();
-        uint8_t factorDim = 20;
-        int weight = 1;
-    };
-
     void runMultiple(const size_t numExperiments, const cuBool_config& config) {
         finalDistances.resize(numExperiments);
 
@@ -332,8 +314,8 @@ public:
                       << " steps\n";
             if(config.tempStart > 0) {
                 cout << "- - - - Start temperature " << config.tempStart
-                      << " multiplied by " << config.tempFactor
-                      << " every " << config.tempStep
+                      << " multiplied by " << config.reduceFactor
+                      << " every " << config.reduceStep
                       << " steps\n";
 
             }
@@ -427,10 +409,10 @@ public:
                     distance_update_sum = 0;
                 }
 
-                if(iteration % config.tempStep == 0) {
-                    temperature *= config.tempFactor;
+                if(iteration % config.reduceStep == 0) {
+                    temperature *= config.reduceFactor;
                     if(weight > 1)
-                        weight *= config.tempFactor;
+                        weight *= config.reduceFactor;
                     if(weight < 1)
                         weight = 1;
                 }

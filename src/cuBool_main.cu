@@ -1,13 +1,9 @@
 #include <vector>
 #include <iostream>
 #include <string>
-#include <algorithm> // min
-// #include <limits>
 
-#include "helper/rngpu.hpp"
 #include "helper/clipp.h"
 
-#include "config.h"
 #include "io_and_allocation.hpp"
 #include "bit_vector_functions.h"
 #ifdef USE_CPU
@@ -44,12 +40,12 @@ int main(int argc, char **argv) {
         (option("--show") & value("s", config.distanceShowEvery)) % "show distance every <s> iterations",
         (option("--ts") & value("start temp", config.tempStart)) % "start temperature",
         (option("--te") & value("end temp", config.tempEnd)) % "end temperature",
-        (option("--tf") & value("factor", config.tempFactor)) % "temperature reduction factor",
-        (option("--tm") & value("move", config.tempStep)) % "reduce temperature every <tm> iterations",
+        (option("-w", "--weight") & value("weight", config.weight)) % "weight in error measure",
+        (option("--factor") & value("factor", config.reduceFactor)) % "temperature/weight reduction factor",
+        (option("--move") & value("move", config.reduceStep)) % "reduce temperature/weight every <move> iterations",
         (option("--seed") & value("seed", config.seed)) % "seed for pseudo random numbers",
         (option("--fc") & value("flip chance", config.flipManyChance)) % "chance to flip multiple bits",
         (option("--fd") & value("flip depth", config.flipManyDepth)) % "flip chance for each bit in multi flip (negative power of two)",
-        (option("-w", "--weight") & value("weight", config.weight)) % "weight in error measure",
         (option("--stuck") & value("s", config.stuckIterationsBeforeBreak)) % "stop if stuck for <s> iterations"
     );
 
@@ -69,24 +65,13 @@ int main(int argc, char **argv) {
         << "stuckIterationsBeforeBreak " << config.stuckIterationsBeforeBreak << "\n"
         << "tempStart " << config.tempStart << "\n"
         << "tempEnd " << config.tempEnd << "\n"
-        << "tempFactor " << config.tempFactor << "\n"
-        << "tempStep " << config.tempStep << "\n"
+        << "reduceFactor " << config.reduceFactor << "\n"
+        << "reduceStep " << config.reduceStep << "\n"
         << "seed " << config.seed << "\n"
         << "loadBalance " << config.loadBalance << "\n"
         << "flipManyChance " << config.flipManyChance << "\n"
         << "flipManyDepth " << config.flipManyDepth << "\n"
         << "weight " << config.weight << endl;
-
-    // // uint32_t seed = (unsigned long)time(NULL) % UINT32_MAX;
-    // uint32_t seed = 46;
-        
-    fast_kiss_state32_t state = get_initial_fast_kiss_state32(config.seed);
-
-    // Discard first 100000 entries of PRNG
-    for (int i = 0; i < 100000; i++)
-        fast_kiss32(state);
-
-    config.seed = fast_kiss32(state);
     
     int height, width;
     float density;
